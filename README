@@ -1,0 +1,79 @@
+[About]
+
+vICQ is simple ICQ client written in PERL with look & fill of micq 
+and works fine with v7 protocol of ICQ. To run it you need Net::ICQ2000 
+module installed. Module written by Robin Fisher <robin@phase3solutions.com>
+and slightly modified by me. Original version could be found here.
+
+[Features]
+A few. But enough to communicate ;) 
+
+	o Sending messages 
+	o Receiving messages 
+	o Invisible handling 
+	o Recieving contacts 
+	o Recieving offline messages 
+	o Acking offline messages 
+	o Recieving auth requests 
+	o Sending authorization 
+
+[Installation]
+Im to lazy to write installation script 
+
+bash$cd Net-ICQ2000-0.2.1/
+bash$perl Makefile.pl
+bash$make
+bash$make test
+bash$su
+bash#make install
+bash#cd ..
+bash#cp vicq /usr/local/bin/
+bash#exit
+bash$cat > ~/.vicqrc
+[options]
+uin=Your_UIN
+password=Your_PASSWORD
+[contacts]
+^D
+bash$vicq
+
+[Config]
+
+bash$cat > ~/.vicqrc
+[options]
+uin=Your_UIN
+password=Your_PASSWORD
+[contacts]
+^D
+
+[options] section consists of string which looks like name=value
+Available options:
+uin - your uin
+password - your password
+status - initial status. Valid are:
+Online
+Free_For_Chat
+Away
+Not_Avalible
+Occupied
+Do_Not_Disturb
+Invisible
+
+
+To add user to visible list add before UIN asterisk ('*')
+See vicqrc.example
+
+
+[TODO]
+TO DO or not TO DO, that is the question 
+
+	o Add coloring(i cann't live without it) 
+	o Replace Term::ReadLine with own readline routine 
+	o Add info command 
+	o Add commands to change User Preferences 
+	o Koi8<->Win1251 converting for cyrillic users
+	o Your suggestions? 
+
+[Download]
+	http://www.gonzo.kiev.ua/projects/vicq/
+

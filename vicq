@@ -1,0 +1,571 @@
+#!/usr/bin/perl
+use Term::ReadLine;
+use Net::ICQ2000;
+
+
+#########################################################################################
+##
+## Configuration
+##
+#########################################################################################
+
+$ENV{"PERL_RL"} = " o=0";
+my %config;
+my %contacts;
+my $done = 0;
+
+%helps = (
+	'' => "Command list:\nmsg\nadd\nsubmit\ntogvis\ninv\nna\ndnd\nonline\naway\nocc\nauth\nw\nquit\n?\nhelp",
+	'msg' =>  "Format: msg [UIN | nickname]",
+	'add' =>  "Format: msg UIN nickname",
+	'submit' => "debug command",
+	'togvis' => "Format: togvis [UIN | nickname]",
+	'inv' => "Format: inv\nChange status to invisible",
+	'na' =>  "Format: na\nChange status to Not Available",
+	'dnd' =>  "Format: dnd\nChange status to Do Not Disturb",
+	'online' => "Format: online\nChange status to Online",
+	'away' => "Format: away\nChange status to Away",
+	'occ' =>  "Format: occ\nChange status to Occupied",
+	'auth' => "Format: auth [UIN | nickname]\nGive authorization",
+	'w' =>  "Format: w\nPrints contactlist",
+	'quit' =>  "Format: quit\nThis command allows you to do something else\nbehind ICQ",
+	'?' => "Format: help [cmd]\nShow help on command",
+	'help' => "Format: help [cmd]\nShow help on command"
+);
+
+
+
+%_command_handlers = (
+	'msg' => sub {
+				my @args = @_;
+    			my $uin = GetUIN($args[0]);
+				if(!$uin) { return "No such nick"; }
+				print "Composing message to $args[0]:\n";
+				my $msg = encode(read_message());
+				my %details = ( uin => $uin,
+						MessageType => 'text',
+						text =>  $msg
+					);
+        		$icq->Send_Command("Cmd_Send_Message", \%details);
+				return "You send instant message to $uin";
+			},
+	'add' => sub {
+				my @args = @_;
+				my $uin = $args[0];
+				my $contact = $args[1];
+				$contacts{$uin} = $contact;
+				my ($details);
+				my @uins = ($uin);
+				$details->{ContactList} = \@uins;
+				$icq->Send_Command("Cmd_Add_ContactList", $details);
+				return "You added $uin($contact) to ContactList";
+			},
+	'submit' => sub {
+				my ($details);
+				my @uins = ();
+				foreach (keys %contacts)
+				{
+					push(@uins,$_);
+				}
+				$details->{ContactList} = \@uins;
+				$icq->Send_Command("Cmd_CTL_UploadList", $details);
+				return '';
+			},
+	'togvis' => sub {
+				my ($details);
+				my @args=@_;
+				my $uin = GetUIN($args[0]);
+				my @uins = ($uin);
+				if($prefs{$uin}{visible} eq 'yes')
+				{
+					$prefs{$uin}{visible} = 'no';
+					$details->{InVisibleList} = \@uins;
+					$icq->Send_Command("Cmd_BOS_Add_InVisibleList", $details);
+				} else
+				{
+					$prefs{$uin}{visible} = 'yes';
+					$details->{VisibleList} = \@uins;
+					$icq->Send_Command("Cmd_BOS_Add_VisibleList", $details);
+				}
+			
+				return '';
+			},
+	'inv' => sub {
+				my ($details);
+				$details->{Status} = "Invisible";
+				$icq->Send_Command("Cmd_GSC_Set_Status", $details);
+				return $details->{Status};
+			},
+	'na' => sub {
+				my ($details);
+				$details->{Status} = "Not_Avalible";
+				$icq->Send_Command("Cmd_GSC_Set_Status", $details);
+				return $details->{Status};
+			},
+	'dnd' => sub {
+				my ($details);
+				$details->{Status} = "Do_Not_Disturb";
+				$icq->Send_Command("Cmd_GSC_Set_Status", $details);
+				return $details->{Status};
+			},
+	'online' => sub {
+				my ($details);
+				$details->{Status} = "Online";
+				$icq->Send_Command("Cmd_GSC_Set_Status", $details);
+				return $details->{Status};
+			},
+	'away' => sub {
+				my ($details);
+				$details->{Status} = "Away";
+				$icq->Send_Command("Cmd_GSC_Set_Status", $details);
+				return $details->{Status};
+			},
+	'occ' => sub {
+				my ($details);
+				$details->{Status} = "Occupied";
+				$icq->Send_Command("Cmd_GSC_Set_Status", $details);
+				return $details->{Status};
+			},
+	'auth' => sub {
+				my ($details);
+        		$details->{uin} = GetContact(@_[0]);
+        		$icq->Send_Command("Cmd_Authorize", $details);
+				return "Authorization sent to $details->{uin}";
+			},
+	'w' => sub {
+				print "================== Contacts ==================\n";
+				foreach (keys %contacts)
+				{
+					my $ip = sprintf "%15s",$prefs{$_}{ip};
+					my $status = $prefs{$_}{status};
+					my $uin = GetContact($_);
+					if($prefs{$_}{visible} eq 'yes')
+					{
+						$uin = "*$uin";
+					}
+					$uin = sprintf "%11s",$uin;
+					print "$uin [$ip] ($status)\n";
+				}
+				print "==============================================\n";
+				return '';
+			},
+	'quit' => sub {
+				$done = 1;
+				return "ZZZZZZZZZZZAAAAAAAAAPPPPPPPPP!!!!!";
+			},
+	'?' => sub {
+				my $cmd = shift;
+				help($cmd);
+				return '';
+			},
+	'help' => sub {
+				my $cmd = shift;
+				help($cmd);
+				return '';
+			}
+);
+
+
+#########################################################################################
+##
+## main part of script
+##
+#########################################################################################
+
+&parse_config;
+
+$icq = Net::ICQ2000->new($config{uin}, $config{password},"1"); #the 1 tells the module to auto connect
+$icq->{_Status} = $config{status};
+
+foreach (keys %contacts)
+{
+	push (@{$icq->{_Auto_Login_Contact_List}}, $_);
+}
+foreach (keys %contacts)
+{
+	push (@{$icq->{_Auto_Login_Visible_List}}, $_) if ($prefs{$_}{visible} eq 'yes');
+}
+$icq->Add_Hook("Srv_Mes_Received", \&RecMessage);
+$icq->Add_Hook("Srv_GSC_User_Info", \&DisplayDetails);
+$icq->Add_Hook("Srv_Srv_Message", \&SrvMessage);
+$icq->Add_Hook("Srv_GSC_MOTD", \&MOTD);
+$icq->Add_Hook("Srv_BLM_Contact_Online", \&User_Online);
+$icq->Add_Hook("Srv_BLM_Contact_Offline", \&DisplayDetails);
+my $message = 0;
+while(!$icq->{_LoggedIn})
+{
+	$icq->Execute_Once();
+}
+
+$SIG{INT} = \&disconnect;
+$SIG{ALRM} = \&do_network;
+alarm 1;
+$| = 1;
+
+$term = new Term::ReadLine 'vICQ v0.1';
+$prompt = "vICQ>";
+$OUT = $term->OUT || STDOUT;
+while (!$done &&  (defined ($_ = $term->readline($prompt)))) 
+{
+	$res = parse_command($_), "\n";
+	warn $@ if $@;
+	if($res) 
+	{
+		print $OUT $res, "\n" unless $@;
+	}
+	$term->addhistory($_) if /\S/;
+}
+
+&save_config;
+
+
+
+#########################################################################################
+##
+## subroutines section
+##
+#########################################################################################
+
+
+sub help
+{
+	my $cmd = shift;
+	print $helps{$cmd};
+	print "\n";
+}
+
+sub save_config
+{
+	my $section = '';
+	print "\n";
+	print "Writing config...\n";
+	my $home = $ENV{HOME};
+	open CONF,">$home/.vicqrc" or die "Cann't write config file ~/.vicqrc";
+	print CONF "[options]\n";
+	foreach (keys %config)
+	{
+		print CONF "$_=$config{$_}\n";
+	}
+	print CONF "[contacts]\n";
+	foreach (keys %contacts)
+	{
+		$uin = $_;
+		$uin = '*' . $_ if($prefs{$_}{visible} eq 'yes');
+		
+		print CONF "$contacts{$_}=$uin\n";
+	}
+	return '';
+}
+
+
+
+sub parse_config
+{
+	my $section = '';
+	print "Reading config...\n";
+	my $home = $ENV{HOME};
+	open CONF,"< $home/.vicqrc" or die "Cann't read config file ~/.vicqrc";
+	while(<CONF>)
+	{
+		chomp;
+		s/^\s+//g;
+		s/\s+$//g;
+		if($_ eq '') { next; }
+		if(/^\[(\w+)\]$/)
+		{
+			$section = $1;
+		} 
+		elsif($section eq 'options')
+		{
+			($name,$value) = split /=/;
+			$config{$name} = $value;
+		}
+		elsif($section eq 'contacts')
+		{
+			($name,$uin) = split /=/;
+			if($uin =~ /^\*(\d+)/)
+			{
+				$uin = $1;
+				$prefs{$uin}{visible} = 'yes';
+				
+			} else
+			{
+				$prefs{$uin}{visible} = 'no';
+			}
+			$contacts{$uin} = $name;
+			$prefs{$uin}{ip} = 'x.x.x.x';
+			$prefs{$uin}{status} = 'Offline';
+		}
+
+
+	}
+	if($config{encoding} ne 'koi')
+	{
+		$config{encoding} = 'win';
+	}
+}
+
+sub parse_command
+{
+	my $command = shift;
+	$command =~ s/^\s+//g;
+	$command =~ s/\s+$//g;
+	my($cmd,@args) = split /\s+/,$command;
+	$cmd = lc($cmd);
+	return &{$_command_handlers{$cmd}}(@args) if (exists $_command_handlers{$cmd});
+	return "No such command. Use 'help' or '?' to get help'" if ($cmd ne '');
+
+
+
+
+}
+
+sub do_network {
+	if($icq)
+	{
+   		$icq->Execute_Once();
+   		$icq->{_Connected} or &disconnect;
+	}
+	alarm 1;
+}
+
+sub GetStatus
+{
+    my $st = shift;
+    $st &= 0xffff;
+    my $hexst =  sprintf '%04x',$st;
+    return $Net::ICQ2000::_r_Status_Codes{$hexst};
+}
+
+sub GetContact
+{
+	my$uin = shift;
+	my $contact = $uin;
+	if($contacts{$uin} ne '')
+	{
+		$contact = $contacts{$uin};
+	}
+	return $contact;
+}
+
+sub GetUIN
+{
+	my$contact = shift;
+	foreach (keys %contacts)
+	{
+		return $_ if(lc($contacts{$_}) eq lc($contact));
+		
+	}
+	if($contact !~ /^\d+$/)
+	{
+		return 0;
+	} else
+	{
+		return $contact;
+	}
+		
+}
+
+sub read_message
+{
+	my $text = '';
+	my $term = new Term::ReadLine 'vICQ v0.1';
+	my $prompt = "msg# ";
+	while ( ($_ = $term->readline($prompt)) ne ".")
+	{
+		$text .= "$_\n";
+	}
+
+	return $text;
+}
+
+
+
+sub disconnect {
+	&save_config;
+    print "Exiting..\n";
+    exit(0);
+}
+
+sub MOTD {
+    my($Object, $details) = @_;
+    #the message of the day handler... (don't know why you'd want to catch this.. : )
+    print "MOTD = [$details->{Web_Address}]\n";
+    print "\n";
+}
+
+
+sub DisplayDetails {
+    my($Object, $details) = @_;
+    
+    #very generic handler that just print's out all the bit's of data that get passed to it..
+}
+
+sub SrvMessage {
+    my($Object, $details) = @_;
+    print "\n";
+	print "=====================================\n";
+    #These are responces from the server which r unique to ICQ..
+    if ($details->{Responce_Type}){
+        #the server is replying to one of our data requests (sending us the ads/update locations..)
+        #not strictly needed..
+        
+        #$details->{Responce_Type}  - Request message server is responding to..
+        #$details->{value}          - Data value returned by server (usally an IP)
+    }
+    elsif ($details->{MessageType} eq "auth_request"){
+		$details->{nick} = decode($details->{nick});
+		$details->{first_name} = decode($details->{first_name});
+		$details->{last_name} = decode($details->{last_name});
+		$details->{reason} = decode($details->{reason});
+		
+		print "Authorization request from $details->{Sender}\n";
+		print "Nick       :     $details->{nick}\n";
+		print "First name :     $details->{first_name}\n";
+		print "Last name  :     $details->{last_name}\n";
+		print "Email      :     $details->{email}\n";
+		print "\n$details->{reason}\n";
+	}
+    elsif ($details->{MessageType} eq "contacts"){
+		my $nick = GetContact($details->{Sender});
+		print "Got $details->{Count} contacts from $nick:\n";
+		my$i = 0;
+		while($i<= $#{$details->{Contacts}})
+		{
+			print "$details->{Contacts}->[$i] $details->{Contacts}->[$i+1]\n";
+			$i+=2;
+		}
+	}
+    elsif ($details->{MessageType} eq "contacts_request"){
+		$name = GetContact($details->{Sender});
+		$details->{Reason} = decode($details->{Reason});
+		print "Contacts request from $name:\n$details->{Reason}\n";	
+	}
+
+    elsif ($details->{MessageType} eq "Normal"){
+		$name = GetContact($details->{Sender});
+		$details->{text} = decode($details->{text});
+		print "Instant offline message from $name:\n$details->{text}\n";	
+    }
+    elsif ($details->{MessageType} eq "ack_offline"){
+		print "End of offline messages!\n";
+    }
+    elsif ($details->{MessageType} eq "URL"){
+		$name = GetContact($details->{Sender});
+		$details->{URL} = decode($details->{URL});
+		$details->{Description} = decode($details->{Description});
+		print "URL message from $name\nURL : $details->{URL}\nDescription:\n$details->{Description}\n";	
+    }
+    elsif ($details->{MessageType} eq "sms_message"){
+		print "SMS message from $details->{sender}($details->{senders_network})\n$details->{time}\n$details->{text}\n";
+    }
+    elsif ($details->{MessageType} eq "sms_response"){
+        #this is the return message confirming that the server got your SMS message, and can send it on..
+        
+        #$details->{deliverable}      - is it deliverable? (Yes/No)
+        #$details->{network}          - What company is sending the message
+        #$details->{message_id}       - The ID given to the SMS message
+        #$details->{messages_left}    - Messages left to send (I always get 0..)
+        #$details->{TaggedDataString} - The non decoded data string, log it if the message isn't deliverable, since it contains the error message (which isn't collected very verll otherwise..)
+    }
+	print "=====================================\n";
+}
+
+
+sub User_Online {
+    my($Object, $details) = @_;
+    
+    #someone on your contact list has come online..
+	$status = GetStatus($details->{Online_Status});
+	$ip = $details->{Ip_Address};
+	$contact = GetContact($details->{UIN});
+	if($prefs{$details->{UIN}}{status} ne $status)
+	{
+    	print "\n";
+		print "$contact change status to  $status\n";
+	}
+	$prefs{$details->{UIN}}{ip} = $ip;
+	$prefs{$details->{UIN}}{status} = $status;
+	
+    
+    #$details->{Online_Status}  - Contact's Status (not very nice currenlty, I'll be making it better soon..)
+    #$details->{Online_User}    - Contact's ICQ number
+    #$details->{SignOn_Date}    - Contact's Logon Date (in UTC)
+    #$details->{Time_Online}    - Contact's Online length of Time (in secs)
+}
+
+sub RecMessage {
+    my($Object, $details) = @_;
+	
+    
+    print "\n";
+	print "=====================================\n";
+    if ($details->{MessageType} eq "auth_request"){
+		print "Authorization request from $details->{Sender}\n";
+		print "Nick       :     $details->{nick}\n";
+		print "First name :     $details->{first_name}\n";
+		print "Last name  :     $details->{last_name}\n";
+		print "Email      :     $details->{email}\n";
+		print "\n$details->{reason}\n";
+	}
+    elsif ($details->{MessageType} eq "contacts"){
+		my $nick = GetContact($details->{Sender});
+		print "Got $details->{Count} contacts from $nick:\n";
+		my$i = 0;
+		while($i<= $#{$details->{Contacts}})
+		{
+			print "$details->{Contacts}->[$i] $details->{Contacts}->[$i+1]\n";
+			$i+=2;
+		}
+	}
+    elsif ($details->{MessageType} eq "Normal"){
+		$name = GetContact($details->{Sender});
+		print "Instant message from $name:\n$details->{text}\n";	
+    }
+    elsif ($details->{MessageType} eq "contacts_request"){
+		$name = GetContact($details->{Sender});
+		print "Contacts request from $name:\n$details->{Reason}\n";	
+    }
+    elsif ($details->{MessageType} eq "URL"){
+		$name = GetContact($details->{Sender});
+		print "URL message from $name\nURL : $details->{URL}\nDescription:\n$details->{Description}\n";	
+
+	}
+    elsif ($details->{MessageType} eq "sms_message"){
+		print "SMS message from $details->{sender}($details->{senders_network})\n$details->{time}\n$details->{text}\n";
+    } else
+	{
+		print "Unknown Message!\n";
+	}
+        
+	print "=====================================\n";
+}
+
+
+sub win2koi
+{
+	my $s = shift;
+	$s =~  tr/¨ÉÖÓÊÅÍÃØÙÇÕÚÔÛÂÀÏÐÎËÄÆÝ‗×ÑÌÈÒÜÁÞ¸יצףךוםדרשחץתפûגאןנמכהז‎ÿקסלטעüב‏/³ךדץכומחû‎תטÿזשקבנעןלהצüס‏ףםיפרגא£ÊÃÕËÅÎÇÛÝÚÈ‗ÆÙ×ÁÐÒÏÌÄÖÜÑÞÓÍÉÔØÂÀ/;
+	return $s;
+}
+
+sub koi2win
+{
+	my $s = shift;
+	$s =~  tr/³ךדץכומחû‎תטÿזשקבנעןלהצüס‏ףםיפרגא£ÊÃÕËÅÎÇÛÝÚÈ‗ÆÙ×ÁÐÒÏÌÄÖÜÑÞÓÍÉÔØÂÀ/¨ÉÖÓÊÅÍÃØÙÇÕÚÔÛÂÀÏÐÎËÄÆÝ‗×ÑÌÈÒÜÁÞ¸יצףךוםדרשחץתפûגאןנמכהז‎ÿקסלטעüב‏/;
+	return $s;
+}
+
+sub decode
+{
+	my $s = shift;
+	return win2koi($s) if($config{encoding} eq 'koi');
+	return $s;
+}
+
+sub encode
+{
+	my $s = shift;
+	return koi2win($s) if($config{encoding} eq 'koi');
+	return $s;
+}

@@ -1,0 +1,7 @@
+[options]
+status=Online
+uin=101
+password=xxx
+[contacts]
+Friend=102
+GoodFriend=*103
