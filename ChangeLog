@@ -3,6 +3,12 @@
 #
 
 
+11/02/2006 Alexander Timoshenko <gonzo@ukrweb.net>
+	o debug/undebug commands, kudos to 
+		FreeLSD <dimka@freelsd.net>.
+	o Fixed bug with "old format mssages", kudos to
+		FreeLSD <dimka@freelsd.net>.
+
 13/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
 	o Fixed bug with CR,LF
 	o Fixed bug with perl 5.00xx

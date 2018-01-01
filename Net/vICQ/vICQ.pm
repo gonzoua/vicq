@@ -1284,9 +1284,17 @@ sub Add_Hook {
 		$DataLength = ${$event->{Data_Load}}[$i];$i++;
 		$Refined->{Sender} = _bytes_to_str($event->{Data_Load}, $i, $DataLength);$i += $DataLength + 4;
 
-		($Refined, $i) = _Read_TLV($event->{Data_Load}, 2, $i, $Refined, _bytes_to_int($event->{Data_Load}, $i-4, 4));
+		($Refined, $i) = _Read_TLV($event->{Data_Load}, 2, $i, $Refined, 10000);
 
-		if ($Refined->{Encoded_Message}){
+		#($Refined, $i) = _Read_TLV($event->{Data_Load}, 2, $i, $Refined, _bytes_to_int($event->{Data_Load}, $i-4, 4));
+
+		$Refined->{Message_Encoding} = _bytes_to_int($event->{Data_Load}, 18, 2); # $i+=2;
+		print "==> Message_Encoding = $Refined->{Message_Encoding}\n" if $Me->{_Debug};
+
+		if ($Refined->{Encoded_Message} && $Refined->{Message_Encoding} == 2){
+
+	  	        print "Encoded_Message: " . $Refined->{Encoded_Message} . "\n" if $Me->{_Debug};
+    
 			#this is a weird ass message, so decode it..
 			my @Encoded_Message = split(/ /, $Refined->{Encoded_Message});
 			undef $Refined->{Encoded_Message};
@@ -1311,11 +1319,33 @@ sub Add_Hook {
 			}
 
 			return ($Refined);
-		}
-		$Refined->{Message_Encoding} = _bytes_to_int($event->{Data_Load}, $i, 2); $i+=2;
 
-		# print "==> $Refined->{Message_Encoding}\n";
-		if ($Refined->{Message_Encoding} == 2){
+		} elsif ($Refined->{Encoded_MessageOld} && $Refined->{Message_Encoding} == 1) {
+#                        print "Encoded_MessageOld = " . $Refined->{Encoded_MessageOld} . "\n";
+ 
+                        my @Encoded_Message = split(/ /, $Refined->{Encoded_MessageOld});
+                        my $DataLength = $#Encoded_Message + 1 - 12;
+#                        print "DataLength = $DataLength \n";
+
+                        $Refined->{MessageType} = "text_message";
+                        $Refined->{text} = _bytes_to_str(\@Encoded_Message, 13, $DataLength);
+
+#                        $Refined->{text} = _bytes_to_str($event->{Data_Load}, 86, $DataLength);
+
+			return ($Refined);
+
+                } elsif ($Refined->{Encoded_Message} && $Refined->{Message_Encoding} == 4) {
+                        my @Encoded_Message = split(/ /, $Refined->{Encoded_Message});
+                        my $DataLength = _endian_bytes_to_int(\@Encoded_Message,6,2);
+#                        my $data = _bytes_to_str(\@Encoded_Message,8,$DataLength);
+
+                        $Refined->{MessageType} = "text_message";
+                        $Refined->{text} = _bytes_to_str(\@Encoded_Message, 8, $DataLength);
+ 
+			return ($Refined);
+                }
+
+                if ($Refined->{Message_Encoding} == 2){
 			#normal text message..
 			$Refined->{MessageType} = "text_message";
 
@@ -2672,23 +2702,25 @@ sub _Decode_Tagged_Text {
 #definitions for the TLVs types being sent from the server..
 #The first digit (2 or 4) denotes the FLAP's Chan
 %_TLV_IN = (
-	2 => {  User_Class		  => 0x01,#!?????
-			Signup_Date		 => 0x02,#! doesn't really work for ICQ, set to date of login, 1 sec before normal login date..
-			SignOn_Date		 => 0x03,#!
-			Unknown00		   => 0x04,#! ??
-			Encoded_Message	 => 0x05,#!
-			Status	   => 0x06,#!
-			Ip_Address		  => 0x0a,#! in 4 byte format..
-			Web_Address		 => 0x0b,#!
-			LANInfo		   => 0x0c,#! (long like 25 bytes..)
-			CapabilityInfo		   => 0x0d,#! ???
-			Time_Online		 => 0x0f #!
+	2 => {          User_Class	        => 0x01,#!?????
+                        SomeNewShit             => 0x13,
+#			Signup_Date		=> 0x02,#! doesn't really work for ICQ, set to date of login
+			SignOn_Date		=> 0x03,#!
+			Unknown00		=> 0x04,#! ??
+			Encoded_Message         => 0x05,#!
+			Encoded_MessageOld      => 0x02,#!
+			Status	                => 0x06,#!
+			Ip_Address	        => 0x0a,#! in 4 byte format..
+			Web_Address	        => 0x0b,#!
+			LANInfo		        => 0x0c,#! (long like 25 bytes..)
+			CapabilityInfo	        => 0x0d,#! ???
+			Time_Online	        => 0x0f #!
 		},
-	4 => {  UIN				 => 0x01,#!
+	4 => {  UIN				=> 0x01,#!
 			HTML_Address		=> 0x04,#!
-			Server_And_Port	 => 0x05,#!
-			Connection_Cookie   => 0x06,#!
-			Error_Code		  => 0x08,#!
+			Server_And_Port	        => 0x05,#!
+			Connection_Cookie       => 0x06,#!
+			Error_Code		=> 0x08,#!
 			Dual_User_Online	=> 0x09,
 		},
 
@@ -2741,7 +2773,7 @@ sub _Decode_Tagged_Text {
 
 %_TLV_Length_I = (
 	2 => {  1   =>1,
-			2   =>1,
+			2   =>2,
 			3   =>1,
 			4   =>1,
 			5   =>2,
@@ -2749,6 +2781,7 @@ sub _Decode_Tagged_Text {
 			10  =>3,
 			12  => 0x25,
 			15  =>1,
+                        19 => 2,
 	},
 	4 => {  8   =>1,
 			6   =>2,
@@ -2812,12 +2845,15 @@ sub _Read_TLV {
 		$DataType   = _bytes_to_int ($Array, $i, 2);
 		$DataLength = _bytes_to_int ($Array, $i+2, 2);
 		$i += 4;
+                
 
 		#find the name of this data type..
 		$DataTypeName = $DataType;
 		foreach (keys %{$_TLV_IN{$Chan}}){
 			$DataTypeName = $_ if ($_TLV_IN{$Chan}{$_} == $DataType);
 		}
+
+#                printf("TLV flapchan=%02x type=%04x len=%04x ($DataTypeName)\n", $Chan, $DataType, $DataLength ); # dimka
 
 		if( exists $_TLV_Length_I{$Chan}{$DataType})
 		{
