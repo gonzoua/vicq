@@ -1,11 +1,7 @@
 #
-# $Id: TODO,v 1.4 2002/01/20 10:28:49 gonzo Exp $
+# $Id: TODO,v 1.8 2002/04/07 13:06:46 gonzo Exp $
 #
 	o Add aliases for external commands 
-	o Add idle status change
-	o Add macroses (extended aliases)
-	o Add Direct Connection handling
 	o Add all events log (login/logout/etc..)
-	o Add 'away/na' messages (now win ICQs trying to get it through DC :()
-	o Add server side contacts support 
-	o Add autoreconnect
+	o Add daemon mode
+	o Add control socket (or other external control entry)

@@ -1,10 +1,10 @@
 #!/usr/bin/perl
-# $Id: install.pl,v 1.5 2002/01/07 12:31:47 gonzo Exp $
+# $Id: install.pl,v 1.8 2002/05/07 09:24:00 gonzo Exp $
 
 use Getopt::Long;
 
 my $o_help = '';
-my $o_prefix = '';       
+my $o_prefix = '';
 my $o_bindir = '';
 my $o_mandir = '';
 
@@ -38,8 +38,8 @@ if($o_help)
 	print "Options:\n";
 	print "--help                    print this message\n";
 	print "--prefix=PREFIX           where vicq package should be installed\n"; 
-	print "--bindir=DIR              where executable script should be instaled\n";
-	print "--mandir=DIR              where manual should be instaled\n";
+	print "--bindir=DIR              where executable script should be installed\n";
+	print "--mandir=DIR              where manual should be installed\n";
 	exit(0);
 }
 
@@ -55,11 +55,11 @@ mkdir ("$mansection",0755) or fail("Can't create $mansection directory: $!") unl
 
 
 ($err = `cp vicq $bindir`) and fail($err);
-($err = `pod2man vicq --section=1 --release="vICQ 0.4.1" --center="vICQ manual page" | gzip -c >  $mandir/man1/vicq.1.gz`) and &fail($err);
-print "Instalation complete\n";
+($err = `pod2man vicq --section=1 --release="vICQ devel" --center="vICQ manual page" | gzip -c > $mandir/man1/vicq.1.gz`) and &fail($err);
+print "Installation complete\n";
 sub fail
 {
 	my $msg = shift;
-	print STDERR "Installatioon failed: $msg\n";
+	print STDERR "Installation failed: $msg\n";
 	exit(1);
 }

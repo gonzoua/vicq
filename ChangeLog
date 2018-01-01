@@ -1,149 +1,441 @@
 #
-# $Id: ChangeLog,v 1.79 2002/02/03 17:38:15 gonzo Exp $
+# $Id: ChangeLog,v 1.124 2002/08/23 10:15:57 gonzo Exp $
 #
 
+23/08/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o New colors added, spellchecking, 's' command added,
+		'prompt_color' & 'version_color' variables added.
+		(contributed by kaolin <cognosco@tentacle.net>)
+	o Fixed some bugs with broken patch 
 
-11/02/2006 Alexander Timoshenko <gonzo@ukrweb.net>
-	o debug/undebug commands, kudos to 
-		FreeLSD <dimka@freelsd.net>.
-	o Fixed bug with "old format mssages", kudos to
-		FreeLSD <dimka@freelsd.net>.
+22/08/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with visible/invisible list
+	o Added 'mailboxes' variable
+		(contributed by Aleksey Korolkov <lehkor@sampo.ru>)
 
-13/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Fixed bug with CR,LF
-	o Fixed bug with perl 5.00xx
-	o msg nick/message feature have been added
-	o Fixed bug with direct connection
+10/07/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o 'seen' command added
+	o autoconnect disabling on password mismatch added
 
-14/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Net::ICQ2000 integrated into script
-	o 'r','a' command (thanks to Alexander Gornyi) have been added
-	o beep() have been added
-	o Coloring have been added
-	o Section contact looks like in .micqrc
+05/07/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o "Unknown SubMessageType: 65606" message fixed
 
+25/06/2002 Vovik Alyekhin <flea@is.com.ua>
+	o Save events is fixed
 
-15/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Added 'e' command (thanks to Jonas Björklund <jonasb@hem.passagen.se>)
+13/06/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Debug output supress
 
-19/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Fixed bug with missing spaces (thanks to Santtu Lakkala)
-	o Password reading have been added(if not in config)
-	o Message cancel command('#') have been (thanks to mds)
-	o fixed bug with users switch to offline
-	o fixed bug with extra CR,LF (thanks to Santtu Lakkala)
-	o Correct handling of password mismatch have been added
-	o Gnu readline features have been added(see README)
+12/06/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o "Unknown Type" message fix #2
+	o Disappearing messages bugfix (previous fix results)
 
-19/11/2001 Victor Wagner <vitus@ice.ru>
-	o Shell escape command ('!') have been added
-	o Code cleanup
-	o Sent messages saves in logs
-	o Commands aliases
-	o Events hooks (documentation will be soon)
-	o 'help' command have been changed
+11/06/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o "Unknown Type" message fixed
 
+06/06/2002 Vovik Alyekhin <flea@is.com.ua>
+	o Dependencies between vicq and vICQ.pm is reorganized
 
-20/11/2001 Victor Wagner <vitus@ice.ru>
-	o sms messages support have been added
-	o Password saving bug have been fixed
+28/05/2002 Vovik Alyekhin <flea@is.com.ua>
+	o 'eg' and 'wg' can accept names of groups as parameters
 
-20/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
-	o  koi8-u support (see README!!!) have been added
-	o 'url' command have been added 
-	o 'view' command have been added 
-	o Sound config have been added (thanks to Viacheslav Kaloshin <multik@asplinux.ru>)
+16/05/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o type-2 & type=4 messages support(NB: file transfere broken)
+	o Greeting cards support 
+
+16/05/2002 Vovik Alyekhin <flea@is.com.ua>
+	o 'add' command bugfix
+
+08/05/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Groups feature added
+	o 'wg', 'eg' commands added
+
+28/04/2002 Olexander Kunytsa <kunia@snark.ukma.kiev.ua>
+	o More intelligent handling unknown nicks in
+		'msg nick1,nick2,nick3' command
+	o Spellchecking, some messages turned into passive voice
+	o Code reformatting
+	o vicqrc.example and README updates
+
+24/04/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Sending to unknown nick bugfix
+	o Files accept/reject feature
+	o 'incoming_path' config variable
+	o Filenames decoding
+
+14/04/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o status change bugfix
+
+09/04/2002 Vovik Alyekhin <flea@is.com.ua>
+	o micq-like autocompletion is more micq-like now :)
+
+08/04/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Change to 'Offline' bug fixed
+
+07/04/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o File receiving added
+	o Fixed bug with '0.0.0.0' IPs
+	o Added new 'msg nick1,nick2,nick3' format
+	o Now vicq reads config before registering new UIN
+	o Fixed bug with wrong ip for direct connection
 	
-21/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
-	o 'info' command added
-	o koi8-u (win2koi sub) have been fixed according to specification
+17/03/2002 Olexander Kunytsa <kunia@snark.ukma.kiev.ua>
+	o Code refactoring
+	o Updated help
+	o Updated vicqrc.example
 
-21/11/2001 Victor Wagner <vitus@ice.ru>
-	o sms replies support have been added
-	o code clean-up
-	o readline option depricated(now trying determine automaticaly 
-		ReadLine lib - gnu or Stub)
+15/03/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Server side contacts support added (see 'getcontacts')
+	o Fixed bug with second connection attempt
+	o Fixed bug with formating in 'wpsearch'
+	o Removed double spaces
+	o Fixed bug with genders
 
-21/11/2001 Dmitry Astapov <adept@umc.com.ua>
-	o https proxy support
+15/03/2002 Olexander Kunytsa <kunia@snark.ukma.kiev.ua>
+	o Spellchecking
+	o Help for 'passwd', 'rand' and 'group'
 
-22/11/2001 Victor Wagner <vitus@ice.ru>
-	o Added ability to change XTerm title (without restoring back for a
-	while)
-	o added 'finger' command
-        o Made substitution of %u, %n and %t safe from malicious shell
-	  metacharacters
+12/03/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed alarm() bug for SUN/IRIX (may be others)
 
-22/11/2001 Dmitry Astapov <adept@umc.com.ua>
-	o nickname/uin completion
-	o README spellchecking
+08/03/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Minor bugfix with unknown terminal names
 
-22/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
-	o command completion
-	o enhanced config file saving subroutine
+07/03/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with 'event' command (wrong status displays)
+	o Fixed bug with event hooks (double escape)
+	o New interface for transferring message text to external commands
+		(see [events] section documentation)
 
+05/03/2002 Storchak Max <smm@mail.univ.kiev.ua>
+	o Spellchecking
 
-23/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Fixed bug with new config reading routine
-	o Fixed bug with https proxy support
-	o Network code improvement - now works with slow
-		connections or slow proxies
+05/03/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Modified 'last' command
+	o Added 'wpsearch' command
+	o Added 'rand' command
+	o Added 'group' command
+	o Prompt update on incoming events (works only with GRL 4.2 
+		and Term::ReadLine::Gnu 1.11)
+	o Added 'passwd' command
 
-23/11/2001 Serge Matveev <serge@matveev.spb.ru>
-	o Hostname resolving in 'finger' command
+28/02/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with 'dl/up' termcap entries for old terminals
 
-24/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Fixed bug with unproper configuration save
-	o Fixed bug with invalid log filenames
-	o normal/quiet modes have been added
-	o Compatibility with non-standard clients
-		(Miranda, Mac clients may be) have been added
-	o auto_info option
+27/02/2002 Olexander Kunytsa <kunia@snark.ukma.kiev.ua>
+	o Spellchecking and removing doubled spaces
 
-24/11/2001 Danil Lavrentyuk <eleneldil@arilou.org>
-	o SMS phonebook added
-	o external SMS phonebook added
+27/02/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with empty URL descriptions
+	o Fixed bug with transliteration function
+	o Added quoted strings in [settings] section
+	o Fixed minor bug with HTTPS proxy support
 
+26/02/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with saving deleted contacts
 
-24/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
-	o message input history lines does not appear in command line now
-	o Fixed bug with history
-	o Add 'prompt' config variable
-	o not_save_config now keep_config
-	o Added sms_response handler
-	o Added sms_delivery_receipt handler
-	o Rewritten _Decode_Tagged_Text (may be unstable, mail me 
-		if "Invalid itagged .." appears)
-	o 'ffc' command added
-	o 'UIN not found' handler added
-	o UIN/nick aliases added
+24/02/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with creating listen socket on Debian (may be other systems)
+	o Added away/NA/etc... messages
+	o Fixed terminal problems with perl5.00503
 
-25/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
-	o URL send now can be canceled by entering '#' in URL description
-	o Command '?' is deprecated. Use alias instead
-	o Code clean-up and remastering
-	o Messages log format changed
-	o History added
-	o Keep-alive packets added(every 60 seconds)
-	o Command 'quiet' changed to 'silent'
-	o 'finger' command improvement
-	o fixed bug in _bytes_to_str
+23/02/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with old Math::BigInt
 
-26/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Fixed bug with HTTPs protocol
-	o Aliases added to autocompletion
+22/02/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Removed 'use bytes'
+	o Added error message on creating listen socket
+	o Minor bugfix in DC management
+	o ESC sequences changed to termcap entries
 
-29/11/2001 Serge Matveev  <serge@matveev.spb.ru>
-	o Contact-list now sorts by alphabet
+21/02/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Added 'auth XXXX decline' feature
+	o Added direct connection support (ugh! :))
+	o Fixed bugs with unknown statuses
+	o Fixed bug with aliases without parameters
+	o Fixed bug with invalid '%t' substitution in status_change
+	o Removed second 'hide_ip' in documentation
 
-29/11/2001 Vovik Alyekhin <flea@is.com.ua>
-	o 'save' command added
-	o log_path and log_type variables added (see README)
-	o Case insensitive setup variables names
+10/02/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Added 'toggle' command
+	o Fixed bug with coloring
+	o Added parameters for aliases
+
+07/02/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with connection on status changing
+	o Added new status Invisible-Away, Inv-N/A etc...
+	o Added 'away_timeout' and 'na_timeout' options
+
+05/02/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with saving config & people status
+	o Added autoconnect feature
+
+04/02/2002 Vovik Alyekhin <flea@is.com.ua>
+	o 'del' command added
+	o 'spam_regexp' option added
+
+>>>>>>>>>>>>>>> vICQ 0.4 released
+
+03/02/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Command 'last' is case-insensitive now
+	o Fixed bug in events section parsing
+	o Fixed bug with '~user/file' filenames in config
+
+01/02/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o syntax fix for solaris (possibly older perl versions)
+
+29/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with event saving
+	o Fixed bug with metacharacter quoting in hooks
+
+28/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o 'reg' command (register new UIN)
+	o '-r' runtime-option
+	o Fixed bug with config loading
+	o Fixed bug with empty config creation and saving
+
+27/01/2002 Olexander Kunytsa <kunia@snark.ukma.kiev.ua>
+	o More intelligent 'birthday alert' output
+
+20/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o New status '0002' added (let it be 'Online' its better then nothing)
+
+19/01/2002 Vovik Alyekhin <flea@is.com.ua>
+	o Multi-command event hooks
+	o 'non-terminal' :) hooks (does not break hooks checking)
+
+19/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with invoke_hook on status_change
+	o \r output in text messages suppressed
+	o Fixed bug in sms_delivery_receipt handler
+	o hide_ip option added
+	o SMS/URL messages cancel possibility added
+
+15/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with empty sections
+
+12/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Run-time defined aliases saves now
+	o Run-time defined events saves now
+
+11/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o New config saving system - now 'include' works not only for sections
+	o Bug with wrong version require fixed
+
+11/01/2002 Vovik Alyekhin <flea@is.com.ua>
+	o Command-line event handling interface
+	o 'event' command
+
+10/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Bug with wrong 'info not found' message fixed
+
+09/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o 'url' does not read URLs if calls second time - fixed
+	o Events bugfix
+	o 'Broken pipe' crash in 'history' command fixed
+	o Module version checking added
+	o 'version' command added
+
+08/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Bugfix with completion
+	o Syntax fix for 5.00x compatibility
+	o Fixed bug with direct connection info and client version
+	o Another one bug with completion fixed
+
+07/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Debug output removed 
+	o install.pl improvement (run-time directory independency)
+	o 'url' command bugfix with '/'
+
+07/01/2002 Daniel <quitelost@home.se>
+	o Case-insensitive contact-list sorting 
+
+06/01/2002 Alexey Medvedev <malvin@cad.ntu-kpi.kiev.ua>
+	o Timestamps for status_change messages
+
+06/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with 'info' command
+	o Fixed bug with extended events hooks
+	o Prompt escape symbols changed (now: %S %U %h %m %s)
+	o Fixed bug with encoding in 'wpset'
+	o Again code refactoring
+
+05/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o XML escaping added for & < > ' " 
+	o Code refactoring
+
+03/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with 'history' command
+	o 'a' and 'r' command corrected
+
+02/01/2002 Olexander Kunytsa <kunia@snark.ukma.kiev.ua>
+	o Added correct converting for ukrainian letters ç',Ç'
+		and copyright sign
+
+02/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o set_status small bugfix
+	o Code refactoring
+	o 'value' command is deprecated
+	o 'permissions' command added
+
+01/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with 'request contacts'
+	o Offline SMSes now handles correctly (thanks to Giuliano Marinkovicc
+		for testing and patience :)
+	o Net::ICQ2000 renamed to Net::vICQ and separated from main script
+	o install.pl update 
+
+30/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with reconnecting after disconnect
+
+29/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o New error handling added
+	o Connection from prompt added
+	o Tokenizer fix
+	o 'offline' command added
+	o Terminal setting now restoring on 'die' exit
+
+29/12/2001 Vovik Alyekhin <flea@is.com.ua>
+	o 'echo' command added
+	o Event hooks improvement
+
+26/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Socks proxy support added
+	o Fixed bug with mail express
+	o Completion enhanced (case insensitive now)
+	o Fixed bug with nicks with spaces
+
+26/12/2001 Vovik Alyekhin <flea@is.com.ua>
+	o 'last' command bugfixes
+
+21/12/2003 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Added Email express (xx@pager.icq.com) handling
+
+20/12/2001 Vovik Alyekhin <flea@is.com.ua>
+	o Extended hooks
+	o 'last' command
+
+19/12/2001 Alexander Favorov <favorov@sensi.org>
+	o Bug with canceling messages to nicknames 
+	  	containing '*' or spaces fixed.
+
+17/12/2001 Vovik Alyekhin <flea@is.com.ua>
+	o Added autosplit for messages
+	o History bug fixed
+	o Added 'alias' command
+
+17/12/2001 Dmitry Astapov <adept@umc.com.ua>
+	o Added birthdays alert
+	o Added 'bd' command
+
+17/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Added 'clear' command
+	o Added new output system (no extra-lines with prompts)
+	o Added meta-characters handling for ReadLine (russian,
+		chinese keyboards)
+	o Info request does not sends for UINS less then 2000
+
+16/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with encoding in invoke_hook
+
+14/12/2001 Dmitry Astapov <adept@umc.com.ua>
+	o Fixed yet another bug with proxy header handling
+
+13/12/2001 Vovik Alyekhin <flea@is.com.ua>
+	o msg nick/ improvement
+	o 'micq_like_completion' added
+	
+13/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with invoke_hook
+	o Added messages time 
+	o Fixed bugs with offline contacts & auth requests
+
+13/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with remove_history
+	o Fixed bug with meta-characters in nicknames
+
+12/12/2001 Dmitry Astapov <adept@umc.com.ua>
+	o Fixed bug with proxy header handling
+
+12/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with network code: revision 1.55 does not work!
+		upgrade to 1.56 and later
+	o Fixed crash bug with quoting metacharacters in invoke_hook
+	o Fixed bug with line wrap in colored prompt
+
+11/12/2001 Vovik Alyekhin <flea@is.com.ua>
+	o set bug fixed
+
+11/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Signal handlers bug fixed
+	o Proxy authorization added
+
+11/12/2001 Michael E. Kolesnikov <mike@pc759.cmc.msu.ru>
+	o SMS encoding bug fixed
+
+10/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o -u option deprecated
+	o -t -o -b options added
+	o Non-interactive mode added
+	o 'translit' encoding added
+
+8/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Internal hooks added
+	o Newline symbols added in msg/text command
+	o Fixed bug with empty UIN in SrvMsg invoke_hook
+	o User info now saves in ~/.vicq/wpinfo/<uin>.nfo on 'info'
+
+8/12/2001 Danil Lavrentyuk <eleneldil@arilou.org>
+	o config save bug with toginvis fixed
+
+7/12/2001 Danil Lavrentyuk <eleneldil@arilou.org>
+	o Colored nick in change_status messages
+	o install.pl improvement
+
+7/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with ESC sequences in file names
+
+6/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed nasty bug with authorization
+	o Fixed bug with Set_Main_WP_Info & wpset
+
+>>>>>>>>>>>>>>> vICQ 0.3 released
+
+5/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o CONFIGURATION section POD documentation
+	o install.pl script added
+	o Initial config creation bug fixed
+
+5/12/2001 Dmitry Astapov <adept@umc.com.ua>
+	o ESC-sequences in log_event bugfix
+
+4/12/2001 Vovik Alyekhin <flea@is.com.ua>
+	o Empty values in set bugfix
+
+4/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Config location changes (now its: ~/.vicq/config)
+	o 'info' command improvement
+	o 'wpset' command added - experimental (deeeeep alpha!!!)
+	o White pages support bugfixes
+
+3/12/2001 Alexandr Bravo <abravo@tanja.spb.ru>
+	o SMS time bug fixed
+	o perl-5.003 syntax compatibility fix
+
+3/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Coloring bug fixed
+	o BOLD, REVERSE, UNDERSCORE attributes added
+	o Info data now decodes to koi
+
+1/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Added 'search' color
+	o Rewrite output system
+	o 'history_entries' config variable added
+	o -o run-time option added
 
 30/11/2001 Vovik Alyekhin <flea@is.com.ua>
-	o Fixed bug with empty log_type
-
+	o 'set' command added
+	o 'disable_empty_separators' config variable added
 
 30/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
 	o 'help' command format changed
@@ -153,300 +445,133 @@
 	o 'include' config directive added
 	o Major config changes
 
-
 30/11/2001 Vovik Alyekhin <flea@is.com.ua>
-	o 'set' command added
-	o 'disable_empty_separators' config variable added
+	o Fixed bug with empty log_type
 
-1/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Added 'search' color
-	o Rewrite output system
-	o 'history_entries' config variable added
-	o -o run-time option added
+29/11/2001 Vovik Alyekhin <flea@is.com.ua>
+	o 'save' command added
+	o log_path and log_type variables added (see README)
+	o Case insensitive setup variables names
 
+29/11/2001 Serge Matveev <serge@matveev.spb.ru>
+	o Contact-list now sorts by alphabet
 
-3/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Coloring bug fixed
-	o BOLD, REVERSE, UNDERSCORE attributes added
-	o Info data now decodes to koi
+26/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with HTTPs protocol
+	o Aliases added to autocompletion
 
+25/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o URL send now can be canceled by entering '#' in URL description
+	o Command '?' is deprecated. Use alias instead
+	o Code clean-up and remastering
+	o Messages log format changed
+	o History added
+	o Keep-alive packets added (every 60 seconds)
+	o Command 'quiet' changed to 'silent'
+	o 'finger' command improvement
+	o fixed bug in _bytes_to_str
 
-3/12/2001 Alexandr Bravo <abravo@tanja.spb.ru>
-	o SMS time bug fixed
-	o perl-5.003 syntax compatibility fix
+24/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o message input history lines does not appear in command line now
+	o Fixed bug with history
+	o Add 'prompt' config variable
+	o not_save_config now keep_config
+	o Added sms_response handler
+	o Added sms_delivery_receipt handler
+	o Rewritten _Decode_Tagged_Text (may be unstable, mail me 
+		if "Invalid tagged .." appears)
+	o 'ffc' command added
+	o 'UIN not found' handler added
+	o UIN/nick aliases added
 
+24/11/2001 Danil Lavrentyuk <eleneldil@arilou.org>
+	o SMS phonebook added
+	o external SMS phonebook added
 
-4/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Config location changes (now its: ~/.vicq/config)
-	o 'info' command improvement
-	o 'wpset' command added - experimental(deeeeep alpha!!!)
-	o White pages support bugfixes
+24/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with unproper configuration save
+	o Fixed bug with invalid log filenames
+	o normal/quiet modes have been added
+	o Compatibility with non-standard clients
+		(Miranda, Mac clients may be) have been added
+	o auto_info option
 
+23/11/2001 Serge Matveev <serge@matveev.spb.ru>
+	o Hostname resolving in 'finger' command
 
-4/12/2001 Vovik Alyekhin <flea@is.com.ua>
-	o Empty values in set bugfix
+23/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with new config reading routine
+	o Fixed bug with https proxy support
+	o Network code improvement - now works with slow
+		connections or slow proxies
 
+22/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o command completion
+	o enhanced config file saving subroutine
 
-5/12/2001 Dmitry Astapov <adept@umc.com.ua>
-	o ESC-sequences in log_event bugfix
+22/11/2001 Dmitry Astapov <adept@umc.com.ua>
+	o nickname/uin completion
+	o README spellchecking
 
-5/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
-	o CONFIGURATION section POD documentation
-	o install.pl script added
-	o Initial config creation bug fixed
+22/11/2001 Victor Wagner <vitus@ice.ru>
+	o Added ability to change XTerm title (without restoring back for a
+	while)
+	o added 'finger' command
+	o Made substitution of %u, %n and %t safe from malicious shell
+	  metacharacters
 
->>>>>>>>>>>>>>> vICQ 0.3 released
+21/11/2001 Dmitry Astapov <adept@umc.com.ua>
+	o https proxy support
 
-6/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Fixed nasty bug with authorization
-	o Fixed bug with Set_Main_WP_Info & wpset
+21/11/2001 Victor Wagner <vitus@ice.ru>
+	o SMS replies support have been added
+	o code clean-up
+	o readline option deprecated (now trying determine automatically 
+		ReadLine lib - gnu or Stub)
 
-7/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Fixed bug with ESC sequences in file names
-
-
-7/12/2001 Danil Lavrentyuk <eleneldil@arilou.org>
-	o Colored nick in change_status messages
-	o install.pl improvement
-
-
-8/12/2001 Danil Lavrentyuk <eleneldil@arilou.org>
-	o config save bug with toginvis fixed
-
-
-8/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Internal hooks added
-	o Newline symbols added in msg/text command
-	o Fixed bug with empty UIN in SrvMsg invoke_hook
-	o User info now saves in ~/.vicq/wpinfo/<uin>.nfo on 'info'
-
-10/12/2001  Alexander Timoshenko <gonzo@ukrweb.net>
-	o -u option deprecated
-	o -t -o -b options added
-	o non-interactive mode added
-	o 'translit' encoding added
-
-11/12/2001 Michael E. Kolesnikov <mike@pc759.cmc.msu.ru>
-	o sms encoding bug fixed
-
-11/12/2001  Alexander Timoshenko <gonzo@ukrweb.net>
-	o signal handlers bug fixed
-	o proxy authorization added
-
-11/12/2001 Vovik Alyekhin <flea@is.com.ua>
-	o set bug fixed
-
-12/12/2001  Alexander Timoshenko <gonzo@ukrweb.net>
-	o Fixed bug with network code: revision 1.55  does not work!
-		upgrade to 1.56 and later
-	o Fixed crash bug with quoting metacharacters in invoke_hook
-	o Fixed bug with line wrap in colored prompt
-
-12/12/2001 Dmitry Astapov <adept@umc.com.ua>
-	o Fixed bug with proxy header handling
-
-
-13/12/2001  Alexander Timoshenko <gonzo@ukrweb.net>
-	o Fixed bug with remove_history
-	o Fixed bug with meta-characters in nicknames
-
-13/12/2001 Vovik Alyekhin <flea@is.com.ua>
-	o msg nick/ improvement
-	o micq_like_completion added
+20/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o koi8-u support (see README!!!) have been added
+	o 'url' command have been added 
+	o 'view' command have been added 
+	o Sound config have been added (thanks to Viacheslav Kaloshin <multik@asplinux.ru>)
 	
-13/12/2001  Alexander Timoshenko <gonzo@ukrweb.net>
-	o Fixed bug with invoke_hook
-	o Added messages time 
-	o Fixed bugs with offline contacts & auth requests
+21/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o 'info' command added
+	o koi8-u (win2koi sub) have been fixed according to specification
 
-14/12/2001 Dmitry Astapov <adept@umc.com.ua>
-	o Fixed yet another bug with proxy header handling
+20/11/2001 Victor Wagner <vitus@ice.ru>
+	o SMS messages support have been added
+	o Password saving bug have been fixed
 
-16/12/2001  Alexander Timoshenko <gonzo@ukrweb.net>
-	o Fixed bug with encoding in invoke_hook
+19/11/2001 Victor Wagner <vitus@ice.ru>
+	o Shell escape command ('!') have been added
+	o Code cleanup
+	o Sent messages saves in logs
+	o Commands aliases
+	o Events hooks (documentation will be soon)
+	o 'help' command have been changed
 
-17/12/2001  Alexander Timoshenko <gonzo@ukrweb.net>
-	o Added 'clear' command
-	o Added new output system(no extra-lines with prompts)
-	o Added meta-characters handling for ReadLine(russian,
-		chinese keyboards)
-	o info request does not sends for UINS less then 2000
+19/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with missing spaces (thanks to Santtu Lakkala)
+	o Password reading have been added (if not in config)
+	o Message cancel command ('#') have been (thanks to mds)
+	o fixed bug with users switch to offline
+	o fixed bug with extra CR,LF (thanks to Santtu Lakkala)
+	o Correct handling of password mismatch have been added
+	o Gnu readline features have been added (see README)
 
-17/12/2001 Dmitry Astapov <adept@umc.com.ua>
-	o Added birthdays alert
-	o Added 'bd' command
+15/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Added 'e' command (thanks to Jonas Björklund <jonasb@hem.passagen.se>)
 
-17/12/2001 Vovik Alyekhin <flea@is.com.ua>
-	o Added autosplit for messages
-	o History bug fixed
-	o Added 'alias' command
+14/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Net::ICQ2000 integrated into script
+	o 'r','a' command (thanks to Alexander Gornyi) have been added
+	o beep() have been added
+	o Coloring have been added
+	o Section contact looks like in .micqrc
+	o msg nick/message feature have been added
 
-19/12/2001 Alexander Favorov <favorov@sensi.org>
-	o Bug with canceling messages to nicknames 
-	  containing '*' or spaces fixed.  
-
-20/12/2001 Vovik Alyekhin <flea@is.com.ua>
-	o Extended hooks
-	o 'last' command
-
-21/12/2001  Alexander Timoshenko <gonzo@ukrweb.net>
-	o Added Email express( xx@pager.icq.com) handling
-
-26/12/2001 Vovik Alyekhin <flea@is.com.ua>
-	o 'last' command bugfixes
-
-26/12/2001  Alexander Timoshenko <gonzo@ukrweb.net>
-	o socks proxy support added
-	o fixed bug with mail express
-	o Completion enhanced (case insensitive now)
-	o Fixed bug with nicks with spaces
-
-29/12/2001 Vovik Alyekhin <flea@is.com.ua>
-	o 'echo' command added
-	o event hooks improvement
-
-29/12/2001  Alexander Timoshenko <gonzo@ukrweb.net>
-	o new error handling added
-	o connection from prompt added
-	o tokenizer fix
-	o 'offline' command added
-	o terminal setting now restoring on 'die' exit
-
-30/12/2001  Alexander Timoshenko <gonzo@ukrweb.net>
-	o Fixed bug with reconnecting  after disconnect
-
-01/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Fixed bug with 'request contacts'
-	o Offline SMSes now handles correctly(thanks to Giuliano Marinkovicc
-		for testing and patience :)
-	o Net::ICQ2000 renamed to Net::vICQ and separated from main script
-	o install.pl update 
-
-02/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
-	o set_status small bugfix
-	o code refactoring
-	o 'value' command is deprecated
-	o 'permissions' command added
-
-02/01/2002 Kunytsa Olexander <kunia@snark.ukma.kiev.ua>
-	o Added correct converting for ukrainian letters ç',Ç'
-		and copyright sign
-
-03/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Fixed bug with 'history' command
-	o 'a' and 'r' command corrected
-
-05/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
-	o XML escaping added for & < > ' " 
-	o Code refactoring
-
-06/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Fixed bug with 'info' command
-	o Fixed bug with extended events hooks
-	o prompt escape symbols changed(now: %S %U %h %m %s)
-	o Fixed bug with encoding in 'wpset'
-	o Again code refactoring
-
-06/01/2002 Alexey Medvedev <malvin@cad.ntu-kpi.kiev.ua>
-	o timestamps for status_change messages
-
-07/01/2002 Daniel <quitelost@home.se>
-	o Case-insensitive contact-list sorting 
-
-07/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Debug output removed 
-	o install.pl improvement (run-time directory independency)
-	o 'url' command bugfix with '/'
-
-08/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Bugfix with completion
-	o syntax fix for 5.00x compatibility
-	o Fixed bug with direct connection info and client version
-	o Another one bug with completion fixed
-
-09/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
-	o 'url' does not read URLs if calls second time - fixed
-	o events bugfix
-	o 'Broken pipe' crash in 'history' command fixed
-	o module version checking added
-	o 'version' command added
-
-10/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
-	o bug with wrong 'info not found' message fixed
-
-11/01/2002 Vovik Alyekhin <flea@is.com.ua>
-	o Command-line event handling interface
-	o 'event' command
-
-11/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
-	o New config saving system - now 'include' works not only for sections
-	o bug with wrong version require fixed
-
-
-12/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
-	o run-time defined aliases saves now
-	o run-time defined events saves now
-
-15/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Fixed bug with empty sections
-
-19/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Fixed bug with invoke_hook on status_change
-	o \r output in text messages supressed
-	o Fixed bug in sms_delivery_receipt handler
-	o hide_ip option added
-	o SMS/URL messages cancel posibility added
-
-19/01/2002 Vovik Alyekhin <flea@is.com.ua>
-	o multi-comand event hooks
-	o 'non-terminal' :) hooks(does not break hooks checking)
-
-
-20/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
-	o New status '0002' added (let it be 'Online' its better then nothing)
-
-27/01/2002 Kunytsa Olexander <kunia@snark.ukma.kiev.ua>
-	o More inteligent 'birthday alert' output
-
-28/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
-	o 'reg' command(register new UIN)
-	o '-r' runtime-option
-	o Fixed bug  with config loading
-	o Fixed bug with empty config creation and saving
-
-29/01/2002 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Fixed bug with event saving
-	o Fixed bug with metacharacter quoting in hooks
-
-01/02/2002 Alexander Timoshenko <gonzo@ukrweb.net>
-	o syntax fix for solaris (posibly older perl versions)
-
-03/02/2002 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Command 'last' is case-insensitive now
-	o Fixed bug in events section parsing
-	o Fixed bug with '~user/file' filenames in config
-
->>>>>>>>>>>>>>> vICQ 0.4 released
-
-08/02/2002 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Fixed bug with changing contacts' statuses to offline
-		while saving config
-	o Security fix $HOME/.vicq will have 0700 permissions while 
-		creating
-
-11/04/2002 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Fixed bug with encoding
-	o Fixed bug with reseting DCInfo & IP
-	o Fixed bug with coloring
-	o Fixed bug with creating empty UIN/nick while starting
-	o Fixed bug with unknown statuses
-
-
-13/04/2002 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Debug output deleted
-
-14/04/2002 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Status change bugfix
-
-15/04/2002 Alexander Timoshenko <gonzo@ukrweb.net>
-	o Coloring bugs in 'w' and 'e' fixed
+13/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with CR,LF
+	o Fixed bug with perl 5.00xx
+	o msg nick/message feature have been added

@@ -1,5 +1,6 @@
-#!/usr/bin/perl  --
-# $Id: vicq,v 1.103 2002/02/03 17:38:15 gonzo Exp $
+#!/usr/bin/perl --
+# $Id: vicq,v 1.150 2002/08/23 10:15:57 gonzo Exp $
+
 
 ##########################################################
 # This program is free software; you can redistribute it and/or modify
@@ -14,22 +15,29 @@
 # See LICENSE for details
 ##########################################################
 
-
 # use strict;
+
 use Term::ReadLine;
 use Getopt::Std;
 use Socket;
 use POSIX qw(mktime getcwd);
 package main;
 use locale;
+use Term::Cap;
 #use Data::Dumper;
+use Sys::Hostname;
 
+
+my $invisible = 0;
+my $connecting = 0;
+my $back_to_online = 0;
 my %config;
 my %opt_info;
 my %file_info;
 my %contacts_info;
 my %aliases_info;
 my %deleted_aliases;
+my %deleted_contacts;
 my %wp;
 my %requests;
 my %files;
@@ -38,14 +46,100 @@ my %_message_handlers=();
 my $altargs;
 my $config_loaded = 0;
 my $section = '';
-my $Id = '$Id: vicq,v 1.103 2002/02/03 17:38:15 gonzo Exp $';
+my $orig_section = '';
+my $Id = '$Id: vicq,v 1.150 2002/08/23 10:15:57 gonzo Exp $';
 my $nomodule = 0;
+my @last_uins;
+my %mbox = ();
 my %connection_types = (
-							1 => 'firewall/https proxy',
-							2 => 'socks4/socks5 proxy',
-							4 => 'normal connection'
-				);
+	1 => 'firewall/https proxy',
+	2 => 'socks4/socks5 proxy',
+	4 => 'normal connection'
+);
 			
+my %_Status_Codes = (
+	'Online' =>		0x00000000,
+	'Free_For_Chat' =>	0x00000020,
+	'Away' =>		0x00000001,
+	'Not_Available' =>	0x00000005,
+	'Occupied' =>		0x00000011,
+	'Do_Not_Disturb' =>	0x00000013,
+	'Invisible' =>		0x00000100,
+	'iAway' =>		0x00000101,
+	'iNot_Available' =>	0x00000105,
+	'iOccupied' =>		0x00000111,
+	'iDo_Not_Disturb' =>	0x00000113,
+	'iFree_For_Chat' =>	0x00000120
+);
+
+my %_Short_Status_Desc = (
+	'0000' => 'online',
+	'0002' => 'online', # Im not sure :(( Let it be 'Online'
+	'0020' => 'ffc',
+	'0001' => 'away',
+	'0004' => 'na',
+	'0005' => 'na',
+	'0008' => 'na', # another one strange code :(
+			# na/occ - who cares? :)
+	'0010' => 'occ',
+	'0011' => 'occ',
+	'0013' => 'dnd',
+	'0100' => 'inv',
+	'0120' => 'ffc[i]',
+	'0101' => 'away[i]',
+	'0104' => 'na[i]',
+	'0105' => 'na[i]',
+	'0110' => 'occ[i]',
+	'0111' => 'occ[i]',
+	'0113' => 'dnd[i]'
+);
+
+my %_r_Status_Codes = (
+	'ffff' => 'Offline',
+	'0000' => 'Online',
+	'0002' => 'Online', # Im not sure :(( Let it be 'Online'
+	'0020' => 'Free for Chat',
+	'0001' => 'Away',
+	'0004' => 'N/A',
+	'0005' => 'N/A',
+	'0008' => 'N/A',
+	'0010' => 'Occupied',
+	'0011' => 'Occupied',
+	'0013' => 'Do Not Disturb',
+	'0100' => 'Invisible',
+	'0120' => 'Free for Chat[inv]',
+	'0101' => 'Away[inv]',
+	'0104' => 'N/A[inv]',
+	'0105' => 'N/A[inv]',
+	'0110' => 'Occupied[inv]',
+	'0111' => 'Occupied[inv]',
+	'0113' => 'Do Not Disturb[inv]',
+	'0200' => 'Online[99a]'
+);
+
+my @WPFields = (
+	"_nickname",
+	"_firstname",
+	"_lastname",
+	"_email",
+	"_minage",
+	"_maxage"
+);
+
+my %groups = (
+	1 => "General",
+	2 => "Romance",
+	3 => "Games",
+	4 => "Students",
+	6 => "20 something",
+	7 => "30 something",
+	8 => "40 something",
+	9 => "50+",
+	10 => "Man chat requesting women",
+	11 => "Woman chat requesting men"
+);
+	
+
 $| =1;
 
 
@@ -55,11 +149,11 @@ vicq - console ICQ2000 client
 
 =head1 SYNOPSIS
 
-  vicq [-u UIN] [-rbo] [-c config] [-t delay]
+ vicq [-u UIN] [-rbo] [-c config] [-t delay]
 
 =head1 DESCRIPTION
 
-B<vicq> is console icq2000 client, simmilar to micq
+B<vicq> is console icq2000 client, similar to micq
 
 =head1 OPTIONS
 
@@ -94,18 +188,26 @@ Register new UIN on startup
 
 =back
 
+=head2 Direct Connections
+
+vICQ can handle incoming client-to-client TCP connection. That means that 
+you can receive messages longer then 450 chars, URL/contacts request 
+messages etc... Also you can set 'Away', 'N/A' messages. For details see B<away>, B<na>, B<occ>, B<ffc>, B<dnd> commands. If your computer have several IPs
+you can specify one of them using B<local_ip> option
+
+
 =head2 Non-interactive mode
 
-You can use vicq in non-interactive mode by writing script and  sending 
-it on stdin of programm, for example:
+You can use vicq in non-interactive mode by writing script and sending 
+it on stdin of program, for example:
 
  echo "msg gonzo/hi" | vicq -b -o
 
- or 
- 
+ or
+
  $cat > xx
  msg gonzo/hi
- msg gonzo 
+ msg gonzo
  multi
  line
  message
@@ -113,19 +215,29 @@ it on stdin of programm, for example:
  ^D
  $cat xx | vicq -b -o -t 5
 
+ or
+
+ $cat << EOF | vicq -b -o -t 5
+ msg gonzo/hi
+ msg gonzo
+ multi
+ line
+ message
+ EOF
+
 On slow connections you must set delay between commands using B<-t> option
-because some message disappears ( i dont sure that source of this problem 
-slow connections, may be ICQ server drops flood messages)
+because some messages disappear ( I'm not sure that the source of this
+problem is slow connection, maybe ICQ server drops flood messages)
 
 
 =head1 CONFIGURATION
 
 Config file (~/.vicq/config) consists of several sections described below. 
 Each section starts with header line like this: '[section_name]'. Lines 
-starting with '#' are comments.  You can split entire config in several 
+starting with '#' are comments. You can split entire config in several 
 files using 'include' directive. BUT! You should place whole section in 
-one file, the section header should be placed in the same file.  Example 
-of using include you can find  at http://www.gonzo.kiev.ua/projects/vicq/eg/
+one file, the section header should be placed in the same file. Example 
+of using include you can find at http://www.gonzo.kiev.ua/projects/vicq/eg/
 
 =head2 [options]
 
@@ -151,26 +263,26 @@ B<keep_config=1>
 
 =item B<encoding> (string)
 
-Valid values 'koi','win' and 'translit', depending on your terminal
+Valid values 'koi','win' and 'translit', depending on your charset
 
 =item B<auto_info> (integer)
 
-If not zero, vICQ will request info on every UIN which is not in ContactList automaticaly
+If not zero, vICQ will request info on every UIN which is not in ContactList automatically
 
 =item B<hide_ip> (decimal)
 
-if not zero ICQ will not show your IP
+if not zero vICQ will not show your IP
 
 =item B<prompt> (string)
 
-Main vICQ prompt template. The following variables will be parsed and may 
-be used in prompt string:
- %S - by short description of your status
- %U - by your uin
- %h - current hour
- %m - current minute
- %s - current second
- %% - '%'
+Main vICQ prompt template. The following variables may be used in prompt string:
+ %S - for short description of your status
+ %U - for your uin
+ %h - for current hour
+ %m - for current minute
+ %s - for current second
+ %. - for space (especially at the end of the prompt)
+ %% - for '%' sign
 
 Example:
 
@@ -179,7 +291,7 @@ Example:
 =item B<sms_phonebook> (string)
 
 Path to external file with sms phones in B<[phones]> section format.
-Section tag ('[phones]') is must for this file.
+This file must start with tag ('[phones]').
 
 
 =item B<separator_length> (integer)
@@ -193,24 +305,29 @@ if not equal to B<0> disables separator without text
 
 =item B<history_entries> (integer)
 
-Number of messages which displays in  user history, if its negative - displays all history
+Number of messages which displays in user history, if its negative - displays all history
 
 
 =item B<mode> (string)
 
 Valid values B<normal> or B<silent>. In B<silent> mode status_change events does not appear on screen.
 
-=item B<status> (string)
+=item B<status> (decimal)
 
 Initial status. Valid values are:
 
  Online
- Free_For_Chat
  Away
- Not_Avalible
+ Not_Available
  Occupied
  Do_Not_Disturb
+ Free_For_Chat
  Invisible
+ iAway
+ iNot_Available
+ iOccupied
+ iDo_Not_Disturb
+ iFree_For_Chat
 
 =item B<colors> (integer)
 
@@ -219,7 +336,7 @@ If this is not B<0>, vicq will use colors.
 =item B<colored_history> (integer)
 
 If this is not B<0>, vICQ use colors for history output(You can set 
-you PAGER environment variable to B<less -R> for using color)
+you PAGER environment variable to B<less -R> to use colors)
 
 =item B<separator_color> (string)
 
@@ -231,23 +348,31 @@ Color for the title separator
 
 =item B<nick_color> (string)
 
-Color for highlighting nicknames
+Color for nicknames highlighting
 
 =item B<uin_color> (string)
 
-Color for highlighting uins
+Color for uins highlighting
 
 =item B<status_color> (string)
 
-Color for highlighting status
+Color for status highlighting
 
 =item B<time_color> (string)
 
-Color for highlighting time
+Color for time highlighting
 
 =item B<message_color> (string)
 
 Message color
+=item B<version_color> <string>
+
+Color for version highlighting
+
+=item B<prompt_color> <string>
+
+Color for prompt highlighting
+
 
 =item B<their_history_color> (string)
 
@@ -268,10 +393,13 @@ Valid colors are:
  GREEN
  BROWN
  BLUE
+ GRAY (or GREY)
  CYAN
  LIGHT_CYAN
  LIGHT_RED
  LIGHT_GREEN
+ LIGHT_BLACK
+ DARK_MAGENTA
  LIGHT_BLUE
 
 And three text attributes for monochrome terminals:
@@ -283,21 +411,21 @@ And three text attributes for monochrome terminals:
 =item B<player> (string)
 
 Command for playing sounds (see B<[sounds]> section)
-'%f' in player path will be replaced with filename 
+'%f' in player command line will be replaced with filename 
 chosen according to the B<[sounds]> section
 
-Example: 
+Example:
 
- player=/path/to/player -f %f -o /dev/dsp 
+ player=/path/to/player -f %f -o /dev/dsp
 
 =item B<browser> (string)
 
 Command for browsing received URLs:
-'%u' in browser command will be replaced with last recieved url
+'%u' in browser command will be replaced with last received url
 
 Example:
 
- browser=/path/to/browser -navigator %u 
+ browser=/path/to/browser -navigator %u
 
 =item B<https_proxy> (integer)
 
@@ -305,8 +433,8 @@ If not B<0>, vICQ with work through HTTPS-capable proxy
 
 =item B<socks_proxy> (integer)
 
-If not B<0>, vICQ with work through SOCKS-capable proxy(v5 only available for
-this moment)
+If not B<0>, vICQ with work through SOCKS-capable proxy(v5 only available at
+the moment)
 
 =item B<proxy_host> (string)
 
@@ -318,7 +446,7 @@ HTTPS/SOCKS proxy port
 
 =item B<proxy_login> (string)
 
-Login for HTTPS/SOCKS proxy authorization (if ommited - don't use aythorization for SOCKS proxy)
+Login for HTTPS/SOCKS proxy authorization (if omitted - don't use authorization for SOCKS proxy)
 
 
 =item B<proxy_password> (string)
@@ -343,10 +471,17 @@ Example of SOCKS proxy configuration(without authorization):
  proxy_port=1080
  proxy_host=10.25.0.99
 
+=item B<local_ip> (string)
+
+IP for direct connections
+
+=item B<incoming_path> (string)
+
+path where incoming files will be storing (default ~/.vicq/incoming/)
 
 =item B<log_path> (string)
 
-Directory, which contains history files. 
+Directory containing history files.
 
 Example:
 
@@ -354,9 +489,9 @@ Example:
 
 =item B<log_type> (string)
 
-Specifies method which logs saves. Its a string if its empty - 
-don't log, else calls methods correspondingly chars which appears 
-in strings. Valid chars:
+Specifies how logs are saved. If its empty - don't log at all,
+else call methods correspondingly chars which appears 
+in strings. Valid chars are:
 
  a - log to <log_path>/vicq.log
  u - log to <log_path>/<uin>.log
@@ -372,66 +507,103 @@ Example:
 
 =item B<micq_like_completion> (decimal)
 
-If not B<0> mICQ style completion is using: cicles through UINs used
+If not B<0> mICQ style completion is using: cycles through UINs used
 in previous B<msg> commands
 
 
 =item B<autosplit> (decimal)
 
-If not B<0> messages longer than 450 chars will be splitted  into several 
+If not B<0> messages longer than 450 chars will be splitted into several 
 parts, otherwise - message will be truncated to 450 chars
+
+
+=item B<autoconnect> (decimal)
+
+If not B<0> vICQ will try to reconnect after specified number of seconds.
+Example:
+
+ autoconnect=5
+
+Will try to connect every 5 seconds
+
+=item B<away_timeout> (decimal)
+
+Period of inactivity (in seconds) after which vICQ will automatically set B<Away>
+status (if your current status is B<Online>/B<Invisible>) 
+
+=item B<na_timeout> (decimal)
+
+Period of inactivity (in seconds) after which vICQ will automatically set B<N/A>
+status (if your status current is B<Online>/B<Invisible> or B<Away>/B<iAway>) 
+
+=item B<mailboxes> (string)
+
+A colon-separated list of file names to be checked for mail. The message 
+to be printed when mail arrives in a particular file may be specified by 
+separating the file name from the message with a `?'. 
+
+Example:
+
+ mailboxes="/var/spool/mail/user:~user/mail/_private?You have private mail"
+ 
 
 =back
 
 =head2 [aliases]
 
-The B<[aliases]> section contains run-time options. Its format is 'alias=command'.
+The B<[aliases]> section contains aliases. Its format is 'alias=command'. Also you could make more complex aliases using parameters: $<digit>. If you want specify all arguments use '$*'
 
 Example:
 
- m=msg
+ m=msg $*
+ colors=toggle colors
+ hi=msg $1/Hi! How are you?
+
+'hi gonzo' will be parsed as 'msg gonzo/Hi! How are you?'
 
 =head2 [phones]
 
 The B<[phones]> section contains phonebook for SMS messages in 'nick phone'
-format.  You can use these aliases in 'sms' command
+format. You can use these aliases in 'sms' command
 
 Example:
 
- squid +380xxxxx
- ReY +380xxxxxx
+ squid 380xxxxx
+ ReY 380xxxxxx
 
 
 =head2 [events]
 
 The B<[events]> section contains events hooks. Its format is
  B<event[/nick][|my_status] command> or
- B<[!][|]event[/nick][|my_status] "command1","command2"> 
+ B<[!][|]event[/nick][|my_status] "command1","command2">
 
-where B<event> is the type of event, B<nick_or_uin> sender's nick or uin, B<my_status> your status (all parameters could be glob-style wildcard), if optional parameters  B<nick_or_uin> or  B<my_status> is ommited then they acts as B<*>(any). B<command> is an command name to be executed when event occurs and event type, sender's info and your status  matches specified parameters.B<!> in the beggining means that hook is inactive. B<|> in the beginning means that event does not break checking after match. The following variables
-will be parsed and may be used in 'command' string:
- B<%e> - by type of event
- B<%u> - by sender's uin
- B<%n> - by sender's nick
- B<%t> - by message text (or status value if type of event is 'status_change') Y
-ou can use uppercase modifiers to make them colored e.g.
- B<%E> - colored type of event
- If you want run external command - use B<!> in command definition.
+where B<event> is the type of event, B<nick_or_uin> sender's nick or uin, B<my_status> your status (all parameters could be glob-style wildcard), if optional parameter B<nick_or_uin> or B<my_status> is omitted then it acts as B<*>(any). B<command> is a command name to be executed when event occurs and event type, sender's info and your status matches specified parameters.B<!> in the beginning means that hook is inactive. B<|> in the beginning means that event continues checking after match. The following variables
+will may be used in 'command' string:
+ B<%e> - for type of event
+ B<%u> - for sender's uin
+ B<%n> - for sender's nick
+ B<%t> - for message text (or status value if type of event is 'status_change') Y
+you can use uppercase modifiers to make them colored e.g.
+ B<%E> - for colored type of event
+ If you want run external command - use B<!> in command definition. You can use environment variable $VICQ_MESSAGE which contain message text in shell commands. Actually vicq just substitute %t by $VICQ_MESSAGE in shell command. 
+
+B<You should use double quotes to quote text in the shell commands>
 
 Examples:
 
- * ! echo 'Event %e from %n(%u) : %t' | mail mymail@myhost.com
+ * ! echo "Event %e from %n(%u) : %t" | mail mymail@myhost.com
 
-(send email to mymail@myhost.com with the full description of the recieved event)
+(send email to mymail@myhost.com with the full description of the received event)
 
  text_message msg %u/i will read this message later
 
 (simple autoresponder)
 
 
- text_message|online msg %u/hi\nI am  online
+ text_message|online msg %u/hi\nI am online
  text_message/GonZo|away msg %u/hi GonZo\nI am away
- 
+
 (extended autoresponder)
 
 List of events types:
@@ -469,13 +641,14 @@ List of events types:
 
 Section B<[sounds]> is similar to B<[events]> section, allowing you
 to specify audio files played upon various incoming events. Playback
-will be done through the "player" application defined in the B<[option]>
+will be done with the "player" application defined in the B<[option]>
 section, with B<%f> token substituted with the proper filename.
 
 =head2 [contacts]
 
 
-B<[contacts]> section lists UINs, format is the same as in .micqrc:
+B<[contacts GroupName]> section contains UINs from group B<GroupName>. By default GroupName is B<General>.
+Format is the same as in .micqrc:
 
  UIN Nickname
 
@@ -490,9 +663,9 @@ If you want create alias for UIN/Nick just add aliases in the line below UIN (se
 
 =head2 Completion & nick handling
 
-You can use TAB to complete command or nick, if your nicks contains spaces:
-use double quotes to handle this nicks 
-eg: 
+You can use TAB to complete command or nick, if nick contains spaces
+use double quotes to handle this nick
+eg:
  vICQ>msg "anri <TAB>
 
 =head2 Messages handling
@@ -501,7 +674,10 @@ eg:
 
 =item B<msg> I<nick|UIN [/msg]>
 
-send an instant ICQ message
+send an instant ICQ message. Nick or uin could be joined with coma.
+ Example:
+ B<msg gonzo,alex,rey/test>
+
 
 =item B<sms> I<nick|phone [/msg]>
 
@@ -509,15 +685,15 @@ send SMS to specified person
 
 =item B<r>
 
-replie to last received message
+reply to last received message
 
 =item B<a>
 
 send a message to the last person you sent a message
 
-=item B<auth> I<nick | UIN>
+=item B<auth> I<nick | UIN> I<[decline]>
 
-send an authorization to specified UIN
+give/decline authorization to specified UIN
 
 =item B<url> I<nick | UIN> [URL]
 
@@ -525,7 +701,7 @@ send an URL to specified person
 
 =back
 
-=head2 Status managment
+=head2 Status management
 
 =over 4
 
@@ -537,25 +713,25 @@ change status to 'Online'
 
 change status to 'Invisible'
 
-=item B<away>
+=item B<away> I<[away-message]>
 
-change status to 'Away'
+change status to 'Away' and set specified away message
 
-=item B<na>
+=item B<na> I<[NA-message]>
 
-change status to 'Not availabe'
+change status to 'Not available' and set specified NA message
 
-=item B<occ>
+=item B<occ> I<[OCC-message]>
 
-change status to 'Occupied'
+change status to 'Occupied' and set specified occupied message
 
-=item B<dnd>
+=item B<dnd> I<[DND-message]>
 
-change status to 'Do Not Disturb'
+change status to 'Do Not Disturb' and set specified DnD message
 
-=item B<ffc>
+=item B<ffc> I<[FFC-message]>
 
-change status to 'Free for chat'
+change status to 'Free for chat' and set specified FFC message
 
 =back
 
@@ -563,7 +739,7 @@ change status to 'Free for chat'
 
 change status to 'Offline/Disconnect'
 
-=head2 Contact list managment
+=head2 Contact list management
 
 =over 4
 
@@ -579,6 +755,14 @@ display the current status of every person in your contact list
 
 display the current status of every online person in your contact list
 
+=item B<wg> I<[group [group]]>
+
+display the current status of every person in your contact list organized by groups
+
+=item B<eg> I<[group [group]]>
+
+display the current status of every online person in your contact list organized by groups
+
 =item B<togvis> I<UIN | nick>
 
 add/remove user to/from visible list
@@ -587,15 +771,26 @@ add/remove user to/from visible list
 
 add/remove user to/from invisible list
 
-=item B<history> I<UIN | nick [count]> 
+=item B<history> I<UIN | nick [count]>
 
 display last I<count> entries of the user's history. If I<count> is
-negative shoes all entries
+negative shows all entries
 
 =item B<finger> I<UIN | nick>
 
 display user's UIN, nick, current status, IP(and resolved host if 
-available), dirrect connection info, and client version
+available), direct connection info, and client version
+
+=item B<getcontacts>
+
+
+download contacts from ICQ server
+
+=item B<seen> I<UIN | nick>
+
+display user's latest logoff.
+
+
 
 =back
 
@@ -619,31 +814,54 @@ save config
 
 send user info request
 
+=item B<rand> I<#>
+
+ Search for random UIN in specified group
+
+
+=item B<group> I<#>
+
+ Set chat group
+
+
 =item B<search> I<email@host.domain>
 
-searche for ICQ user
+search for ICQ user
+
+=item B<wpsearch> I<field1 value1 name2 value2 ....>
+
+Extended search for ICQ user. Valid fields are:
+ nickname
+ firstname
+ lastname
+ email
+ minage
+ maxage
+
+Example:
+ wpsearch nickname gonzo email gonzo@ukrweb.net
 
 =item B<silent>
 
-toggle to silent mode - change status events does not displays
+toggle to silent mode - change status events are not shown
 
 =item B<normal>
 
-toggle to normal mode - change status events displays
+toggle to normal mode - change status events are shown
 
 =item B<view>
 
-open last recieved URL with I<browser> command
+open last received URL with I<browser> command
 
 =item B<set> I<[key[=value]]>
 
 shows/sets config variables values
 
-=item B<wpset> 
+=item B<wpset>
 
-set basic White Pages info 
+set basic White Pages info
 
-=item B<clear> 
+=item B<clear>
 
 clear screen
 
@@ -669,13 +887,26 @@ clear screen
 
  Display current version of vICQ
 
-=item B<event> I<[ on | off event_id]>  I<add event_spec>
+=item B<event> I<[ on | off | del event_id]> I<add event_spec>
 
- activate/deactivate event  or add new event
+ activate/deactivate event or add/remove event
+
+=item B<bd>
+
+ show people who will have birthday in 3 days
 
 =item B<reg> I<password>
 
- register new UIN with specified password 
+ register new UIN with specified password
+
+
+=item B<passwd> I<[password]>
+
+ Change UIN password
+
+=item B<toggle> I<variable>
+
+ Set variable to 1 if it is zero and to 0 otherwise
 
 =back
 
@@ -708,37 +939,42 @@ my %opts;
 my %prefs;
 my %wpinfo;
 my %colors = (
-	LIGHT_RED  => "\033[1;31m",
-	LIGHT_GREEN => "\033[1;32m",
-	YELLOW => "\033[1;33m",
-	LIGHT_BLUE => "\033[1;34m",
-	MAGENTA => "\033[1;35m",
-	LIGHT_CYAN => "\033[1;36m",
-	WHITE => "\033[1;37m",
-	NORMAL => "\033[0m",
-	BLACK => "\033[0;30m",
-	RED => "\033[0;31m",
-	GREEN => "\033[0;32m",
-	BROWN => "\033[0;33m",
-	BLUE => "\033[0;34m",
-	CYAN => "\033[0;36m",
-	BOLD => "\033[1m",
-	UNDERSCORE => "\033[4m",
-	REVERSE => "\033[7m",
-	
+        LIGHT_BLACK =>  "\033[1;30m",
+        LIGHT_RED =>    "\033[1;31m",
+        LIGHT_GREEN =>  "\033[1;32m",
+        YELLOW =>       "\033[1;33m",
+        LIGHT_BLUE =>   "\033[1;34m",
+        MAGENTA =>      "\033[1;35m",
+        LIGHT_CYAN =>   "\033[1;36m",
+        WHITE =>        "\033[1;37m",
+        NORMAL =>       "\033[0m",
+        BLACK =>        "\033[0;30m",
+        RED =>          "\033[0;31m",
+        GREEN =>        "\033[0;32m",
+        BROWN =>        "\033[0;33m",
+        BLUE =>         "\033[0;34m",
+        DARK_MAGENTA => "\033[0;35m",
+        CYAN =>         "\033[0;36m",
+        GRAY =>         "\033[0;37m",
+        GREY =>         "\033[0;37m",
+        BOLD =>         "\033[1m",
+        UNDERSCORE =>   "\033[4m",
+        REVERSE =>      "\033[7m",
 );
 
-my $last_message_from = 0; 
+my $last_message_from = 0;
+my $reconnect_timer = 0;
 my $last_message_to = 0;
 my $last_message_url = '';
 my $requested_uin = 0;
 my $gnu_readline = 0; # Are we using Term::ReadLine::Gnu
 my $term;
+my $termcap; # Term::Cap
 my $save_password=0;
 my $search_result = '';
 
 # ESC sequences to delimit non-printable chars
-my $ignore_start=''; 
+my $ignore_start='';
 my $ignore_stop='';
 
 my $keepalive=1;
@@ -759,75 +995,83 @@ my @SoundHooks=();
 # Command aliases to be preserved on write_config
 my %aliases;
 
-# Structure of help susbsystem
+# Structure of help subsystem
 my %subtopics = (
-	'status' => ['online','away','na','dnd','occ','ffc','inv','offline'],
+	'status' => ['s','online','away','na','dnd','occ','ffc','inv','offline'],
 	'messages' => ['msg','r','a','sms','auth','url','last'],
-	'contacts' => ['add','togvis','history','finger','w','e'],
+	'contacts' => ['add','del','togvis','history','finger','w','e','getcontacts', 'wg', 'eg', 'roster'],
 	'misc' => ['!','help','save','info','silent','normal',
-		'view','set','search','wpset','alias' , 'clear','echo',
-		'permissions', 'version','event']
+		'view','set','search','wpsearch','wpset','alias','clear','echo',
+		'permissions', 'version','event','bd','rand','group']
 );
 # Root subtopics description
-my %descriptions = 
+my %descriptions =
 (
-	'status' => 'Status change commands',
-	'messages' => 'commands for message handling',
-	'contacts' => 'contact list managing',
-	'misc' => 'miscellaneous commands'
+	'status' =>	"Status change commands",
+	'messages' =>	"Commands for message handling",
+	'contacts' =>	"Contact list managing",
+	'misc' =>	"Miscellaneous commands"
 );
 
 #Commands descriptions
 my %helps = (
-	'msg' =>  "[UIN | nickname][/message]",
-	'sms' =>  "phonenumber[/message]",
-	'add' =>  "UIN nickname",
-	'url' => "[UIN | nickname]",
-	'view' => " \nview last received URL",
-	'silent' => 'Changes mode to silent(no status messages',
-	'normal' => 'Changes mode to normal(status messages enabled)',
-	'submit' => "\n(debug command)",
-	'info' => "[UIN | nickname]",
-	'togvis' => "[UIN | nickname]\nadds/removes user to/from visible list",
-	'toginvis' => "[UIN | nickname]\nadds/removes user to/from invisible list",
-	'finger'=>  "[UIN | nickname]\n gives information about person on your contact list\n",
-	'inv' => "\nChange status to invisible",
-	'na' =>  "\nChange status to Not Available",
-	'dnd' =>  "\nChange status to Do Not Disturb",
-	'online' => "\nChange status to Online",
-	'away' => "\nChange status to Away",
-	'occ' =>  "\nChange status to Occupied",
-	'ffc' =>  "\nChange status to Free For Chat",
-	'offline' => "\nDisconnect from server",
-	'auth' => "[UIN | nickname]\nGive authorization",
-	'r' => "Reply to last received message",
-	'a' => "Send a message to the last person you sent a message",
-	'w' =>  "\nPrints contactlist",
-	'e' =>  "\nPrints contactlist, but not \"Offline\"",
-	'history' => "\nhistory UIN|nick [count] shows last 'count' history\nentries for specified UIN. By default count=10",
-	'quit' =>  "\nThis command allows you to do something else\nbehind ICQ",
-	'help' => "[cmd]\nShow help on command",
-	'!' => "OS command\nNote the space after exclamation point",
-	'save' => "save config",
-	'set' => "[key = ] [value]\nshow/change config options",
-	'search' => 'search email@host.domain - Searches for a ICQ user.',
-	'wpset' => 'Set basic White Pages info (experimental)',
-	'alias' => "[alias = ] [command]\nshow/change command aliases",
-	'clear' => "\nClears screen",
-	'last' => "UIN | nickname - show last message from UIN or nickname",
-	'echo' =>'text - print text',
-	'permissions' => " [+|-][web|auth]\nSet 'Web aware/Need authorization' switches",
-	'event' => "[command arg]\nView/rule events. Syntax:\n event - view events\n event on <N> - enable event number N\n event off <N> - disable event number N\n event del <N> - delete event number N\n event add <event definition> - add
-event",
-
-	'version' => "show vicq version & revision and vICQ.pm version",
-	'reg' => "password\nRegister new UIN with specified password"
+	'msg' =>	"[UIN | nickname[,nickname]][/message]\nSends a message",
+	'sms' =>	"phonenumber[/message]\nSends a SMS to cellular",
+	'add' =>	"UIN nickname\nUse to add user to contact list",
+	'del' =>	"UIN|nickname\nUse to delete user from contact list",
+	'url' =>	"[UIN | nickname][/URL]\nSends a URL message",
+	'view' =>	"\nUse to view last received URL",
+	'silent' =>	"\nChanges mode to 'silent' (no status messages)",
+	'normal' =>	"\nChanges mode to 'normal' (status messages enabled)",
+	'submit' =>	"\n(debug command)",
+	'info' =>	"[UIN | nickname]\nShows user details",
+	'togvis' =>	"[UIN | nickname]\nAdds/removes user to/from visible list",
+	'toginvis' =>	"[UIN | nickname]\nAdds/removes user to/from invisible list",
+	'finger'=>	"[UIN | nickname]\nGives information about person from your contact list",
+	'inv' =>	"\nChanges your status to 'Invisible'",
+	'na' =>		"\nChanges your status to 'Not Available'",
+	'dnd' =>	"\nChanges your status to 'Do Not Disturb'",
+	'online' =>	"\nChanges your status to 'Online'",
+	'away' =>	"\nChanges your status to 'Away'",
+	'occ' =>	"\nChanges your status to 'Occupied'",
+	'ffc' =>	"\nChanges your status to 'Free For Chat'",
+	'offline' =>	"\nDisconnects from server",
+	'auth' =>	"[UIN | nickname] [decline]\nGives/declines authorization",
+	'r' =>		"\nReplies on last received message",
+	'a' =>		"\nSends a message to the last person you've sent a message",
+	'w' =>		"\nPrints contact list",
+	'e' =>		"\nPrints contact list, but not 'Offline' users",
+	'wg' =>		"[group [group]]\nPrints contact list organized by groups",
+	'eg' =>		"[group [group]]\nPrints contact list, but not 'Offline' users organized by groups",
+	'history' =>	"UIN|nick [count]\nShows last 'count' history entries for specified UIN.\nBy default count=10",
+	'quit' =>	"\nThis command allows you to do something other\nthen ICQ ;-)",
+	'help' =>	"[cmd]\nShows help on command",
+	'!' =>		"OS command\nExecutes external command",
+	'save' =>	"\nsaves config",
+	'set' =>	"[key = ] [value]\nShows/changes config options",
+	'search' =>	"email\@host.domain\nSearches for an ICQ user by e-mail",
+	'wpset' =>	"\nSets basic White Pages info (experimental)",
+	'alias' =>	"[alias = ] [command]\nShows/changes command aliases",
+	'clear' =>	"\nClears screen",
+	'last' =>	"[UIN | nickname]\nShows last message from UIN or nickname",
+	'echo' =>	"text\nPrints text",
+	'permissions' =>	" [+|-][web|auth]\nSets 'Web aware/Need authorization' switches",
+	'event' =>	"[command arg]\nShows and rules events. Syntax:\n event - view events\n event on <N> - enable event number N\n event off <N> - disable event number N\n event del <N> - delete event number N\n event add <event definition> - add event",
+	'version' =>	"\nShows vicq version & revision and vICQ.pm version",
+	'reg' => 	"password\nUse to register new UIN with specified password",
+	'toggle' =>	"variable\nSets value of variable to 1 if it is zero, and to 0 otherwise",
+	'getcontacts' =>	"\nDownloads and shows contacts from ICQ server",
+	'bd' =>		"\nShows all who have birthday in 3 days",
+	'rand' =>	"[group]\nSearches for random user",
+	'group' =>	"[group]\nSets your group for random search",
+	'passwd' =>	"\nChanges your ICQ password",
+	'wpsearch' =>	"field1 value1 fiedl2 value2....\nExtended search. Valid fields are:\nnickname, firstname, lastname, email, minage, maxage",
+        's' =>	"\nShows your current status"
 );
 
 # UINs for micq-style completion
 my @uin_history;
 my @current_uin_history;
-
 
 
 ##############################################################################
@@ -838,50 +1082,48 @@ my @current_uin_history;
 
 getopts("bot:dDc:r",\%opts);
 
-
 undef $@;
 eval ("require 'Net/vICQ/vICQ.pm'"); # for debug purposes
-if($@)
-{
+if($@) {
 	$nomodule++;
 	$@ = '';
 }
-if($nomodule)
-{
+if($nomodule) {
 	eval ("use Net::vICQ");
-	if($@)
-	{
-		print "Cann't find Net::vICQ\n";
+	if($@) {
+		print "Can't find Net::vICQ\n";
 		exit;
 	}
 }
-my $module_required = '0.03';
+
+my $module_required = ($Net::vICQ::DEVEL)?'1.36':'0.05';
 my $module_version;
-$module_version = $Net::vICQ::VERSION if defined $Net::vICQ::VERSION;
+$module_version = ($Net::vICQ::DEVEL)?$Net::vICQ::REVISION:$Net::vICQ::VERSION;
 $module_version = '0.01' unless $module_version;
-if($module_version < $module_required)
-{
-	print "Please, upgrade vICQ.pm to $module_required\n";
+if($module_version lt $module_required) {
+	print "Please, upgrade vICQ.pm to ".
+		(($Net::vICQ::DEVEL)?'devel ':'')."$module_required\n";
 	exit;
 }
-if($opts{'r'})
-{
-	my $password = getpass("Password for new UIN:");
-	print "\n";
-	my $err = '';
-	($config{'uin'},$err) = register($password);
-	if(!$config{'uin'})
-	{
-		print "Registration failed: $err\n";
-		exit;
-	} else
-	{
-		print "Brand new UIN: $config{uin}\n";
-	}
+
+my $vicq = 0;
+my $module = 0;
+if($Id =~ / (\d+)\.(\d+) /) {
+	$vicq = $2;
 }
+
+if($Net::vICQ::REVISION =~ /(\d+)\.(\d+)/) {
+	$module = $2;
+}
+
+
 # Initializing commands
 Add_Command_Handler('msg', \&cmd_msg);
 Add_Command_Handler('search', \&cmd_search);
+Add_Command_Handler('wpsearch', \&cmd_wpsearch);
+Add_Command_Handler('rand', \&cmd_rand);
+Add_Command_Handler('passwd', \&cmd_passwd);
+Add_Command_Handler('group', \&cmd_group);
 Add_Command_Handler('info', \&cmd_info);
 Add_Command_Handler('wpset', \&cmd_wpset);
 Add_Command_Handler('history', \&cmd_history);
@@ -892,7 +1134,8 @@ Add_Command_Handler('silent', \&cmd_silent);
 Add_Command_Handler('sms', \&cmd_sms);
 Add_Command_Handler('r', \&cmd_r);
 Add_Command_Handler('a', \&cmd_a);
-Add_Command_Handler('get', \&cmd_get);
+Add_Command_Handler('getcontacts', \&cmd_getcontacts);
+Add_Command_Handler('roster', \&cmd_roster);
 Add_Command_Handler('add', \&cmd_add);
 Add_Command_Handler('submit', \&cmd_submit);
 Add_Command_Handler('togvis', \&cmd_togvis);
@@ -909,10 +1152,14 @@ Add_Command_Handler('occ', \&cmd_occ);
 Add_Command_Handler('auth', \&cmd_auth);
 Add_Command_Handler('finger', \&cmd_finger);
 Add_Command_Handler('w', \&cmd_w);
+Add_Command_Handler('wg', \&cmd_wg);
 Add_Command_Handler('e', \&cmd_e);
+Add_Command_Handler('eg', \&cmd_eg);
 Add_Command_Handler('quit', \&cmd_quit);
 Add_Command_Handler('bd', \&cmd_bd);
 Add_Command_Handler('!', \&cmd_shell);
+Add_Command_Handler('status', \&cmd_status);
+Add_Command_Handler('s', \&cmd_status);
 Add_Command_Handler('help', \&cmd_help);
 Add_Command_Handler('save', \&cmd_save);
 Add_Command_Handler('set', \&cmd_set);
@@ -923,15 +1170,19 @@ Add_Command_Handler('offline', \&cmd_offline);
 Add_Command_Handler('version', \&cmd_version);
 Add_Command_Handler('event', \&cmd_event);
 Add_Command_Handler('reg', \&cmd_register);
-Add_Command_Handler('debug', \&cmd_debug);
-Add_Command_Handler('undebug', \&cmd_undebug);
-
+Add_Command_Handler('del', \&cmd_del);
+Add_Command_Handler('toggle', \&cmd_toggle);
+Add_Command_Handler('seen', \&cmd_seen);
 
 ####################################################
 
 Add_Message_Handler('sms_delivery_receipt',\&sms_delivery_receipt_handler);
 Add_Message_Handler('status_change',\&status_change_handler);
 Add_Message_Handler('URL',\&url_handler);
+Add_Message_Handler('greeting_card',\&gc_handler);
+Add_Message_Handler('files',\&files_handler);
+Add_Message_Handler('file',\&file_handler);
+Add_Message_Handler('chat',\&chat_handler);
 Add_Message_Handler('sms_message',\&sms_message_handler);
 Add_Message_Handler('contacts_request',\&contacts_request_handler);
 Add_Message_Handler('email_message',\&email_message_handler);
@@ -947,6 +1198,7 @@ Add_Message_Handler('user_info_not_found',\&user_info_not_found_handler);
 Add_Message_Handler('ack_offline',\&ack_offline_handler);
 Add_Message_Handler('set_permissions_ack',\&set_permissions_ack_handler);
 Add_Message_Handler('user_info_unknown',\&dummy_handler);
+Add_Message_Handler('dummy',\&dummy_handler);
 Add_Message_Handler('user_info_about',\&user_info_about_handler);
 Add_Message_Handler('user_info_main',\&user_info_main_handler);
 Add_Message_Handler('user_info_extra_emails',\&user_info_extra_emails_handler);
@@ -960,16 +1212,34 @@ Add_Message_Handler('user_info_past_background',
 		\&user_info_past_background_handler);
 Add_Message_Handler('user_info_personal_interests',
 		\&user_info_personal_interests_handler);
+Add_Message_Handler('random_uin',\&random_uin_handler);
+Add_Message_Handler('group_set',\&dummy_handler);
+Add_Message_Handler('password_set',\&password_set_handler);
+Add_Message_Handler('sms_error',\&sms_error_handler);
 
 
 
 my $config_file = expand_file($opts{'c'} || '~/.vicq/config');
-my @x = keys %contacts;
 print &cmd_read;
 # &parse_config;
-
 print &cmd_version;
 print "\n";
+
+
+
+if($opts{'r'}) {
+	my $password = getpass("Password for new UIN:");
+	print "\n";
+	my $err = '';
+	($config{'uin'},$err) = register($password);
+	if(!$config{'uin'}) {
+		print "Registration failed: $err\n";
+		exit;
+	} else {
+		print "Brand new UIN: $config{uin}\n";
+	}
+}
+
 
 my $icq = Net::vICQ->new($config{uin}, $config{password},"0");
 $icq->{_no_lists} = $opts{'b'};
@@ -980,18 +1250,35 @@ $icq->{_Proxy_Login} = $config{proxy_login};
 $icq->{_Proxy_Password} = $config{proxy_password};
 $icq->{_Requests} = \%requests;
 $icq->{_Hide_IP} = 1 if $config{hide_ip};
-if($config{https_proxy})
-{
+
+$icq->SetID(($module<<16) + $vicq);
+
+if($config{https_proxy}) {
 	$icq->{_Proxy_Type} = 'https';
 	$icq->{_Force_HTTPS_Port}=1 if($config{proxy_force_https_port});
-}
-elsif($config{socks_proxy})
-{
+} elsif($config{socks_proxy}) {
 	$icq->{_Proxy_Type} = 'socks';
 }
 
-$icq->{_Status} = $config{status} if defined $config{status};
 
+init_terminal();
+$icq->{_Status} = $_Status_Codes{$config{status}} if defined $config{status};
+$invisible = 1 if($icq->{_Status} & 0x100);
+
+if(exists $config{local_ip}) {
+	$icq->{_DCIP} = $config{local_ip}
+} else {
+	my $host = hostname;
+	my $ip = gethostbyname($host);
+	if(length($ip) == 4)
+	{
+		$icq->{_DCIP} = inet_ntoa($ip);
+	}
+}
+$icq->InitDCServer();
+$icq->InitFileServer();
+my $error = $icq->GetError();
+print "! $error\nDirect connections disabled\n" if $error;
 
 if($opts{'d'}) { $icq->{_Debug} = 1;}
 foreach (keys %contacts)
@@ -1004,6 +1291,9 @@ foreach (keys %contacts)
 	push (@{$icq->{_Auto_Login_Invisible_List}}, $_) if ($prefs{$_}{invisible} eq 'yes');
 }
 
+$config{incoming_path} = '~/.vicq/incoming' unless (exists $config{incoming_path});
+mk_all_dirs($config{incoming_path});
+$icq->{_Incoming_Dir} = expand_file($config{incoming_path});
 
 # Initializing hooks
 $icq->Add_Hook("Srv_Mes_Received", \&MessageHandler);
@@ -1013,14 +1303,16 @@ $icq->Add_Hook("Srv_GSC_MOTD", \&MOTD);
 $icq->Add_Hook("Srv_Contact_List", \&ContactList);
 $icq->Add_Hook("Srv_BLM_Contact_Online", \&MessageHandler);
 $icq->Add_Hook("Srv_BLM_Contact_Offline", \&MessageHandler);
+$icq->Add_Hook("DC_Message", \&MessageHandler);
+$icq->Add_Hook("File_Offer", \&MessageHandler);
 
 my $message = 0;
 
 
-if($config{autoconnect})
-{
-	connect_server();
-}
+# if($config{autoconnect})
+# {
+	# connect_server();
+# }
 
 birthday_alert();
 $lastactivity = time();
@@ -1028,7 +1320,7 @@ $SIG{INT} = \&disconnect;
 # $SIG{PIPE} = sub { print "sigpipe git!\n"; };
 $SIG{__DIE__} = \&die_handler;
 $SIG{__WARN__} = \&warn_handler;
-eval 
+eval
 {
 	$term = new Term::ReadLine::Gnu 'vICQ v0.2';
 	$gnu_readline = 1;
@@ -1039,17 +1331,17 @@ eval
 	if ($config{micq_like_completion}){
 		print "mICQ style completion\n";
 		$term->add_defun('tab',\&tab,ord("\t"));
-	}else{
+	} else {
 		$attribs->{completion_function}=
 		sub {
 
 			my ($text, $line, $start, $end) = @_;
-			return (keys %helps) if (substr($line, 0, $start) =~ /^\s*$/);
+			return (keys %_command_handlers) if (substr($line, 0, $start) =~ /^\s*$/);
 			return (completion_func($text,(map { $contacts{$_}{name}} keys %contacts, keys %contacts)));
 		};
 	}
 #
-# People can enter russian/chinese etc... 
+# People can enter russian/chinese etc...
 #
 	$term->parse_and_bind("set meta-flag on");
 	$term->parse_and_bind("set convert-meta off");
@@ -1057,8 +1349,8 @@ eval
 	$term->parse_and_bind("set output-meta on");
 	print "Using GNU readline\n";
 };
-if ($@) 
-{
+
+if ($@) {
 	$term = new Term::ReadLine 'vICQ v0.2';
 	print "Using simplified readline. Install Term::ReadLine::GNU to get more service\n";
 }
@@ -1067,26 +1359,53 @@ undef $@;
 
 if ($ENV{TERM}=~/^xterm*/ || $ENV{TERM} eq 'rxvt') {
 	print "\033]0;vICQ\a";
-}    
+}
 
-while (!$done &&  (defined ($_ = is_interactive() ? $term->readline(make_prompt($config{prompt})) : <STDIN> ))) 
+# geting initial modify time for all mailboxes
+if(exists $config{mailboxes}) {
+	foreach $mb (split(/:/,$config{mailboxes})) {
+		my $message = "New mail in $mb";
+		$mb = expand_file($mb);
+		if($mb =~ /(.*?)\?(.*)/) {
+			$mb = $1;
+			$message = $2;
+		}
+		if(-e $mb) {
+			$mbox{$mb}{mtime} = (stat($mb))[9];
+			$mbox{$mb}{msg} = $message;
+		} else {
+			print "Mailbox $mb doesn't exist\n";
+		}
+	}
+}
+
+
+$SIG{ALRM} = \&tick_handler;
+alarm 1;
+while (!$done && (defined ($_ = is_interactive() ? $term->readline(make_prompt($config{prompt})) : <STDIN> )))
 {
 	chomp;
 	$lastactivity = time();
 	my $res = parse_command($_);
 	warn $@ if $@;
-	if($res) 
-	{
+	if($res) {
 		print $res, "\n" unless $@;
 	}
 	#
-	# wierd sleep(2) :(( sleep conflicts with alarm
+	# weird sleep(2) :(( sleep conflicts with alarm
 	#
 	my $tout = $opts{'t'} || 2;
-	if(!is_interactive())
-	{
+	if(!is_interactive()) {
 		my $t = $keepalive;
 		while(($t+$tout) > $keepalive) {sleep 1; }
+	}
+	if($back_to_online) {
+		if($invisible) {
+			set_status('Invisible');
+		} else {
+			set_status('Online');
+		}
+		$back_to_online = 0;
 	}
 }
 
@@ -1094,7 +1413,6 @@ alarm 0;
 $SIG{INT} = 'DEFAULT';
 $SIG{ALRM} = 'DEFAULT';
 print "\n" . &save_config unless ($config{keep_config});
-
 
 
 ###########################################################################
@@ -1120,7 +1438,7 @@ sub parse_alias_line
 	my $s = shift;
 	my $new = '';
 	my $old = '';
-	if ($s =~ /([^ \t=]+)\s*=\s*([^ \t=]+)/) {
+	if ($s =~ /([^ \t=]+)\s*=\s*(.+)/) {
 		$new =$1;
 		$old = $2;
 	}
@@ -1134,19 +1452,14 @@ sub parse_contacts_line
 	my $invisible='no';
 	my $uin = '';
 	my $name = '';
-	if($s =~ /^([\*~]?\d+)\s+(.*)$/)
-	{
+	if($s =~ /^([\*~]?\d+)\s+(.*)$/) {
 		$uin = $1;
 		$name = $2;
-		if($uin =~ /^\*(\d+)/)
-		{
+		if($uin =~ /^\*(\d+)/) {
 			$uin = $1;
 			$visible = 'yes';
 			$invisible = 'no';
-			
-		} 
-		elsif ($uin =~ /^~(\d+)/)
-		{
+		} elsif ($uin =~ /^~(\d+)/) {
 			$uin = $1;
 			$invisible = 'yes';
 			$visible = 'no';
@@ -1158,16 +1471,13 @@ sub parse_contacts_line
 sub compose_contacts_line
 {
 	my ($uin,$nick,$visible,$invisible) = @_;
-	if($visible  ne 'yes')
-	{
+	if($visible ne 'yes') {
 		$uin = "~$uin" if($invisible eq 'yes');
-	} else
-	{
+	} else {
 		$uin = "*$uin" if($visible eq 'yes');
 	}
 	return "$uin $nick";
 }
-
 
 sub compare_events
 {
@@ -1200,28 +1510,33 @@ sub help
 {
 	my $cmd = shift;
 	# my @subnames = keys %subtopics;
-	if(in_array($cmd, [keys %subtopics]))
-	{
+	if(in_array($cmd, [keys %subtopics])) {
 		print "Section: $cmd, use help cmd for command help\n";
 		foreach (@{$subtopics{lc $cmd}})
 		{
 			print "$_\n";
 		}
-	}
-	elsif ($cmd) {
-		if (exists $helps{$cmd}) {
-		  printf "Format: %s %s\n",$cmd ,$helps{$cmd} ;
+	} elsif (defined $cmd) {
+		if(isAlias($cmd)) {
+			print "'$cmd' is aliased to '$aliases{$cmd}'\n";
+			}
+		elsif (exists $helps{$cmd}) {
+			printf "Format: %s %s\n",$cmd ,$helps{$cmd} ;
 		} else {
-		  print "Undefined command '$cmd'\n";
-		}  
+			print "Undefined command '$cmd'\n";
+		}
 	} else {
 		print "Use help [section] for section command list\n";
 		foreach (keys %subtopics)
 		{
-			print "$_ : $descriptions{$_}\n";
+			print sprintf("%16s : ",$_)."$descriptions{$_}\n";
 		}
-	 }  
+	}
 }
+
+###############
+# Subroutine: save_options
+# Purpose: saves config file
 
 sub save_options
 {
@@ -1234,11 +1549,10 @@ sub save_options
 #
 # Getting options file
 #
-	foreach (keys %config) 
+	foreach (keys %config)
 	{
 		my $file = $opt_info{$_}{file};
-		if(($file ne '') && !(in_array($file,\@opts_files)) )
-		{
+		if(($file ne '') && !(in_array($file,\@opts_files)) ) {
 			push @opts_files, $file;
 		}
 		# print "$_ $opt_info{$_}{file}:$opt_info{$_}{line}\n";
@@ -1248,38 +1562,34 @@ sub save_options
 #
 	foreach my $file (@opts_files)
 	{
-		open CONF,"< " . $file or die "Cann't read config file $file";
+		open CONF,"< " . $file or die "Can't read config file $file";
 		@lines = <CONF>;
 		$modified = 0;
 		chomp @lines;
 		close CONF;
-		foreach (keys %config) 
+		foreach (keys %config)
 		{
-			next if (($_ eq 'password') &&  !$save_password);
+			next if (($_ eq 'password') && !$save_password);
 			if($file eq $opt_info{$_}{file}) {
 				my ($name,$value) = parse_options_line($lines[$opt_info{$_}{line}]);
-				if($name eq $_)
-				{
-				 	if($value ne $config{$_}) {
+				if($name eq $_) {
+					if($value ne $config{$_}) {
 						$lines[$opt_info{$_}{line}] = "$_=$config{$_}";
 						# print "saving $_ to $opt_info{$_}{file}:$opt_info{$_}{line}\n";
 						$modified = 1;
 					}
-				} else
-				{
-					# hmmmm who is messing with the files?!?!
+				} else {
+					# hmmm who is messing with the files?!?!
 					# print "error $_ at $file:$opt_info{$_}{file}:$opt_info{$_}{line}\n";
 					print "\nConfig files are changed. Don't mess with files while vICQ running!\n";
 					print "Options not saved!\n";
 					return;
 				}
-				
 			}
 		}
 
-		if($modified)
-		{
-			open CONF,"> " . $file or die "Cann't write config file $file";
+		if($modified) {
+			open CONF,"> " . $file or die "Can't write config file $file";
 			foreach (@lines)
 			{
 				print CONF $_,"\n";
@@ -1289,33 +1599,31 @@ sub save_options
 	}
 # Now saves all new options
 	my $file = '';
-	if(exists $files{options}{file})
-	{
+	if(exists $files{options}{file}) {
 		$file = $files{options}{file};
-		open CONF,"< " . $file or die "Cann't read config file $file";
+		open CONF,"< " . $file or die "Can't read config file $file";
 		@lines = <CONF>;
 		chomp @lines;
 		close CONF;
-		foreach (keys %config) 
+		foreach (keys %config)
 		{
-			next if (($_ eq 'password') &&  !$save_password);
+			next if (($_ eq 'password') && !$save_password);
 			if($opt_info{$_}{file} eq '') {
 				splice @lines,$files{options}{line}+1,0,"$_=$config{$_}";
 				# print "saving new option $_ to $file:$files{options}{line}\n";
 				$modified = 1;
 			}
 		}
-	} else
-	{
+	} else {
 		$file = $config_file;
-		open CONF,"< " . $file or die "Cann't read config file $file";
+		open CONF,"< " . $file or die "Can't read config file $file";
 		@lines = <CONF>;
 		chomp @lines;
 		close CONF;
 		my $section_defined = 0;
-		foreach (keys %config) 
+		foreach (keys %config)
 		{
-			next if (($_ eq 'password') &&  !$save_password);
+			next if (($_ eq 'password') && !$save_password);
 			if($opt_info{$_}{file} eq '') {
 				push @lines,'[options]' unless $section_defined;
 				$section_defined = 1;
@@ -1325,16 +1633,15 @@ sub save_options
 			}
 		}
 	}
-	if($modified)
-	{
-		open CONF,"> " . $file or die "Cann't write config file $file";
+
+	if($modified) {
+		open CONF,"> " . $file or die "Can't write config file $file";
 		foreach (@lines)
 		{
 			print CONF $_,"\n";
 		}
 		close CONF;
 	}
-
 }
 
 sub save_contacts
@@ -1343,15 +1650,14 @@ sub save_contacts
 	my @bad_vars = ();
 	my $modified = 0;
 	my @lines = ();
-	push @contacts_files, $files{contacts}{file}  if exists $files{contacts}{file};
+	push @contacts_files, $files{contacts}{file} if exists $files{contacts}{file};
 #
 # Getting contacts file
 #
-	foreach (keys %contacts) 
+	foreach (keys %contacts)
 	{
 		my $file = $contacts_info{$_}{file};
-		if(($file ne '') && !(in_array($file,\@contacts_files)) )
-		{
+		if(($file ne '') && !(in_array($file,\@contacts_files)) ) {
 			push @contacts_files, $file;
 		}
 	}
@@ -1360,42 +1666,56 @@ sub save_contacts
 #
 	foreach my $file (@contacts_files)
 	{
-		open CONF,"< " . $file or die "Cann't read config file $file";
+		open CONF,"< " . $file or die "Can't read config file $file";
 		@lines = <CONF>;
 		$modified = 0;
 		chomp @lines;
 		close CONF;
-		foreach (keys %contacts) 
+		foreach (keys %contacts)
 		{
 			if($file eq $contacts_info{$_}{file}) {
 				my ($uin,$nick,$visible,$invisible) = parse_contacts_line($lines[$contacts_info{$_}{line}]);
-				if($uin eq $_)
-				{
-				 	if(($nick ne $contacts{$_}{name}) 
+				if($uin eq $_) {
+					if(($nick ne $contacts{$_}{name})
 						|| ($prefs{$_}{visible} ne $visible)
 						|| ($prefs{$_}{invisible} ne $invisible) ) {
 						$lines[$contacts_info{$_}{line}] = compose_contacts_line($_, $contacts{$_}{name}, $prefs{$_}{visible}, $prefs{$_}{invisible});
 						$modified = 1;
 					}
-				} else
-				{
-					# hmmmm who is messing with the files?!?!
+				} else {
+					# hmmm who is messing with the files?!?!
 					# print "error $_ at $file:$opt_info{$_}{file}:$opt_info{$_}{line}\n";
 					print "\nConfig file $file have been changed.\n";
 					print "Don't mess with files while vICQ running!\n";
 					print "Contacts not saved!\n";
 					return;
 				}
-				
+			}
+		}
+
+		foreach (keys %deleted_contacts)
+		{
+			if($deleted_contacts{$_}{file} eq $file) {
+				my ($contact, $nick) = parse_contacts_line($lines[$deleted_contacts{$_}{line}]);
+				if($contact eq $_) {
+					$lines[$deleted_contacts{$_}{line}] = "### TO DELETE ###";
+					$modified = 1;
+				} else {
+					# hmmm who is messing with the files?!?!
+					print "\nConfig file $file have been changed.\n";
+					print "Don't mess with files while vICQ running!\n";
+					print "Contacts not saved!\n";
+					return;
+				}
 			}
 		}
 
 		if($modified)
 		{
-			open CONF,"> " . $file or die "Cann't write config file $file";
+			open CONF,"> " . $file or die "Can't write config file $file";
 			foreach (@lines)
 			{
-				print CONF $_,"\n";
+				print CONF $_,"\n" unless $_ eq '### TO DELETE ###';
 			}
 			close CONF;
 		}
@@ -1403,58 +1723,56 @@ sub save_contacts
 # Now saves all new contacts
 
 	my $file = '';
-	if(exists $files{contacts}{file})
-	{
+	if(exists $files{contacts}{file}) {
 		$file = $files{contacts}{file};
-		open CONF,"< " . $file or die "Cann't read config file $file";
+		open CONF,"< " . $file or die "Can't read config file $file";
 		@lines = <CONF>;
 		chomp @lines;
 		close CONF;
 
-		foreach (keys %contacts) 
+		foreach (keys %contacts)
 		{
 			if($contacts_info{$_}{file} eq '') {
-				my $newline = compose_contacts_line($_, $contacts{$_}{name}, 
+				my $newline = compose_contacts_line($_, $contacts{$_}{name},
 					$prefs{$_}{visible}, $prefs{$_}{invisible});
 				splice @lines,$files{contacts}{line}+1,0,$newline;
 				$modified = 1;
-	
 			}
 		}
-	} else
-	{
+
+	} else {
 		$file = $config_file;
-		open CONF,"< " . $file or die "Cann't read config file $file";
+		open CONF,"< " . $file or die "Can't read config file $file";
 		@lines = <CONF>;
 		chomp @lines;
 		close CONF;
 
 		my $section_defined = 0;
-		foreach (keys %contacts) 
+		foreach (keys %contacts)
 		{
 			if($contacts_info{$_}{file} eq '') {
-				my $newline = compose_contacts_line($_, $contacts{$_}{name}, 
-					$prefs{$_}{visible}, $prefs{$_}{invisible});
+				my $newline = compose_contacts_line($_, $contacts{$_}{name}, $prefs{$_}{visible}, $prefs{$_}{invisible});
 				push @lines,'[contacts]' unless $section_defined;
 				$section_defined = 1;
 				push @lines,$newline;
 				$modified = 1;
-	
 			}
 		}
-
 	}
+
+#
+# Deleting contacts
+#
 	
-	if($modified)
-	{
-		open CONF,"> " . $file or die "Cann't write config file $file";
+	if($modified) {
+		open CONF,"> " . $file or die "Can't write config file $file";
 		foreach (@lines)
 		{
 			print CONF $_,"\n";
 		}
 		close CONF;
 	}
-
+	%deleted_contacts = ();
 }
 
 sub save_events
@@ -1462,15 +1780,14 @@ sub save_events
 	my @events_files = ();
 	my $modified = 0;
 	my @lines = ();
-	push @events_files,$files{events}{file} if  exists $files{events}{file};
+	push @events_files,$files{events}{file} if exists $files{events}{file};
 #
 # Getting events files
 #
-	foreach (@ExternalHooks) 
+	foreach (@ExternalHooks)
 	{
 		my $file = $_->{file};
-		if(($file ne '') && !(in_array($file,\@events_files)) )
-		{
+		if(($file ne '') && !(in_array($file,\@events_files)) ) {
 			push @events_files, $file;
 		}
 	}
@@ -1479,29 +1796,26 @@ sub save_events
 #	
 	foreach my $file (@events_files)
 	{
-		open CONF,"< " . $file or die "Cann't read config file $file";
+		open CONF,"< " . $file or die "Can't read config file $file";
 		@lines = <CONF>;
 		$modified = 0;
 		chomp @lines;
 		close CONF;
-		foreach (@ExternalHooks) 
+		foreach (@ExternalHooks)
 		{
 			if($file eq $_->{file}) {
 				my $hook = parse_event_definition($lines[$_->{line}]);
-				if($hook->{eventspec} eq $_->{eventspec})
-				{
-				 	if(!compare_events($hook,$_))  {
+				if($hook->{eventspec} eq $_->{eventspec}) {
+					if(!compare_events($hook,$_)) {
 						$lines[$_->{line}] = compose_event_definition($_);
 						$modified = 1;
 					}
-				} else
-				{
+				} else {
 					print "\nConfig file $file have been changed.\n";
 					print "Don't mess with files while vICQ running!\n";
 					print "Events not saved!\n";
 					return;
 				}
-				
 			}
 		}
 
@@ -1512,69 +1826,61 @@ sub save_events
 		{
 			if($file eq $_->{file}) {
 				my $hook = parse_event_definition($lines[$_->{line}]);
-				if($hook->{eventspec} eq $_->{eventspec})
-				{
+				if($hook->{eventspec} eq $_->{eventspec}) {
 					$lines[$_->{line}] = "### TO DELETE ###";
 					$modified = 1;
-				} else
-				{
+				} else {
 					# hmmmm who is messing with the files?!?!
 					print "\nConfig file $file have been changed.\n";
 					print "Don't mess with files while vICQ running!\n";
 					print "Events not saved!\n";
 					return;
 				}
-				
 			}
-
 		}
+
 		@DeletedHooks = ();
-		if($modified)
-		{
-			open CONF,"> " . $file or die "Cann't write config file $file";
+		if($modified) {
+			open CONF,"> " . $file or die "Can't write config file $file";
 			foreach (@lines)
 			{
 				print CONF $_,"\n" unless $_ eq '### TO DELETE ###';
 			}
 			close CONF;
 		}
-
-
 	}
 
 #
 # Saving new events
 #
 
-
 	my $file = '';
 	if(exists $files{events}{file})
 	{
 		$file = $files{events}{file};
-		open CONF,"< " . $file or die "Cann't read config file $file";
+		open CONF,"< " . $file or die "Can't read config file $file";
 		@lines = <CONF>;
 		chomp @lines;
 		close CONF;
 
-		foreach (@ExternalHooks) 
+		foreach (@ExternalHooks)
 		{
 			if($_->{file} eq '') {
 				splice @lines,$files{aliases}{line}+1,0,
 					compose_event_definition($_);
 				$modified = 1;
-
 			}
 		}
-	} else
-	{
+
+	} else {
 		$file = $config_file;
-		open CONF,"< " . $file or die "Cann't read config file $file";
+		open CONF,"< " . $file or die "Can't read config file $file";
 		@lines = <CONF>;
 		chomp @lines;
 		close CONF;
 
 		my $section_defined = 0;
-		foreach (@ExternalHooks) 
+		foreach (@ExternalHooks)
 		{
 			if($_->{file} eq '') {
 				push @lines, compose_event_definition($_);
@@ -1585,9 +1891,9 @@ sub save_events
 		}
 
 	}
-	if($modified)
-	{
-		open CONF,"> " . $file or die "Cann't write config file $file";
+
+	if($modified) {
+		open CONF,"> " . $file or die "Can't write config file $file";
 		foreach (@lines)
 		{
 			print CONF $_,"\n";
@@ -1597,9 +1903,7 @@ sub save_events
 }
 
 
-
-
-sub save_aliases 
+sub save_aliases
 {
 	my @aliases_files = ();
 	my $modified = 0;
@@ -1608,11 +1912,10 @@ sub save_aliases
 #
 # Getting aliases file
 #
-	foreach (keys %aliases) 
+	foreach (keys %aliases)
 	{
 		my $file = $aliases_info{$_}{file};
-		if(($file ne '') && !(in_array($file,\@aliases_files)) )
-		{
+		if(($file ne '') && !(in_array($file,\@aliases_files)) ) {
 			push @aliases_files, $file;
 		}
 	}
@@ -1621,30 +1924,27 @@ sub save_aliases
 #	
 	foreach my $file (@aliases_files)
 	{
-		open CONF,"< " . $file or die "Cann't read config file $file";
+		open CONF,"< " . $file or die "Can't read config file $file";
 		@lines = <CONF>;
 		$modified = 0;
 		chomp @lines;
 		close CONF;
-		foreach (keys %aliases) 
+		foreach (keys %aliases)
 		{
 			if($file eq $aliases_info{$_}{file}) {
 				my ($alias, $cmd) = parse_alias_line($lines[$aliases_info{$_}{line}]);
-				if($alias eq $_)
-				{
-				 	if($cmd ne $aliases{$_})  {
+				if($alias eq $_) {
+					if($cmd ne $aliases{$_}) {
 						$lines[$aliases_info{$_}{line}] = "$alias=$aliases{$_}";
 						$modified = 1;
 					}
-				} else
-				{
-					# hmmmm who is messing with the files?!?!
+				} else {
+					# hmmm who is messing with the files?!?!
 					print "\nConfig file $file have been changed.\n";
 					print "Don't mess with files while vICQ running!\n";
 					print "Aliases not saved!\n";
 					return;
 				}
-				
 			}
 		}
 
@@ -1654,12 +1954,10 @@ sub save_aliases
 		foreach (keys %deleted_aliases)
 		{
 			my ($alias, $cmd) = parse_alias_line($lines[$deleted_aliases{$_}{line}]);
-			if($alias eq $_)
-			{
+			if($alias eq $_) {
 					$lines[$deleted_aliases{$_}{line}] = "### TO DELETE ###";
 					$modified = 1;
-			} else
-			{
+			} else {
 				# hmmmm who is messing with the files?!?!
 				print "\nConfig file $file have been changed.\n";
 				print "Don't mess with files while vICQ running!\n";
@@ -1668,51 +1966,46 @@ sub save_aliases
 			}
 		}
 		%deleted_aliases = ();
-		if($modified)
-		{
-			open CONF,"> " . $file or die "Cann't write config file $file";
+
+		if($modified) {
+			open CONF,"> " . $file or die "Can't write config file $file";
 			foreach (@lines)
 			{
 				print CONF $_,"\n" unless $_ eq '### TO DELETE ###';
 			}
 			close CONF;
 		}
-
-
 	}
 
 #
 # Saving new aliases
 #
 
-
 	my $file = '';
-	if(exists $files{aliases}{file})
-	{
+	if(exists $files{aliases}{file}) {
 		$file = $files{aliases}{file};
-		open CONF,"< " . $file or die "Cann't read config file $file";
+		open CONF,"< " . $file or die "Can't read config file $file";
 		@lines = <CONF>;
 		chomp @lines;
 		close CONF;
 
-		foreach (keys %aliases) 
+		foreach (keys %aliases)
 		{
 			if($aliases_info{$_}{file} eq '') {
 				splice @lines,$files{aliases}{line}+1,0,"$_=$aliases{$_}";
 				$modified = 1;
-	
 			}
 		}
-	} else
-	{
+
+	} else {
 		$file = $config_file;
-		open CONF,"< " . $file or die "Cann't read config file $file";
+		open CONF,"< " . $file or die "Can't read config file $file";
 		@lines = <CONF>;
 		chomp @lines;
 		close CONF;
 
 		my $section_defined = 0;
-		foreach (keys %aliases) 
+		foreach (keys %aliases)
 		{
 			if($aliases_info{$_}{file} eq '') {
 				push @lines,"$_=$aliases{$_}";
@@ -1721,20 +2014,16 @@ sub save_aliases
 				$modified = 1;
 			}
 		}
-
 	}
 	
-	if($modified)
-	{
-		open CONF,"> " . $file or die "Cann't write config file $file";
+	if($modified) {
+		open CONF,"> " . $file or die "Can't write config file $file";
 		foreach (@lines)
 		{
 			print CONF $_,"\n";
 		}
 		close CONF;
 	}
-
-
 
 }
 
@@ -1743,10 +2032,17 @@ sub save_config
 {
 	my $section = '';
 	my $output = '';
+	if($back_to_online) {
+		if($invisible) {
+			set_status('Invisible');
+		} else {
+			set_status('Online');
+		}
+		$back_to_online = 0;
+	}
 	$output .= "Writing config...";
-	if(!-e $ENV{'HOME'} . "/.vicq")
-	{
-		mkdir $ENV{'HOME'} . "/.vicq",0700;
+	if(!-e $ENV{'HOME'} . "/.vicq") {
+		mkdir $ENV{'HOME'} . "/.vicq",0755;
 	}
 	save_options();
 	save_contacts();
@@ -1769,7 +2065,7 @@ sub parse_file
 	my $file = shift;
 	my $uin;
 	my $output = '';
-	my $sfile =  $file;
+	my $sfile = $file;
 	# print "Parsing... $file\n";
 	$file = expand_file($file);
 	# if($file !~ /^[\.\/]/)
@@ -1777,20 +2073,17 @@ sub parse_file
 		# $file = "$ENV{HOME}/.vicq/$file";
 	# }
 	my $base = &getcwd() . '/';
-	if($file =~ /(.*\/)[^\/]*/)
-	{
+	if($file =~ /(.*\/)[^\/]*/) {
 		$base = $1;
 	}
-	if( -e "$file")
-	{
-		open CONF,"< $file" or die "Cann't read config file $file";
-	} else
-	{
-		return "Cann't open config file $file\n";
+
+	if( -e "$file") {
+		open CONF,"< $file" or die "Can't read config file $file";
+	} else {
+		return "Can't open config file $file\n";
 	}
 	$file_info{$file}{mtime}= (stat($file))[9];
 	$file_info{$file}{modified}= 0;
-	my @z = keys %contacts;
 	my @lines = <CONF>;
 	my $line_number = -1;
 	foreach (@lines)
@@ -1802,140 +2095,126 @@ sub parse_file
 		if($_ eq '') { next; }
 		# skip comments;
 		if(/^#/) {next;}
-		if(/^include\s+(.*)/i)
-		{
+		if(/^include\s+(.*)/i) {
 			my $f = $1;
-			if($f !~ /^[\/~]/)
-			{
+			if($f !~ /^[\/~]/) {
 				$f = $base . $f;
 			}
 			$output .= parse_file($f);
 			next;
 		}
-		if(/^\[(\w+)\]$/)
-		{
+		if(/^\[([\s\w]+)\]$/) {
+			$orig_section = $1;
 			$section = lc($1);
 			$files{$section}{file} = $file;
 			$files{$section}{line} = $line_number;
-		} 
-		elsif($section eq 'phones')
-		{
+		} elsif($section eq 'phones') {
 				$smsphones{$1} = $2 if /^\s*(\w+)\s+(.+)/;
-		}
-		elsif($section eq 'options')
-		{
-		      if (/([^ \t=]+?)\s*=\s*(.*)/) {
+		} elsif($section eq 'options') {
+			if (/([^ \t=]+?)\s*=\s*(.*)/) {
 				my $key=lc($1);
-				if(exists $config{$key})
-				{
+				if(exists $config{$key}) {
 					print "Warning! '$key' redefined in $file:$line_number\n" unless $config_loaded;
 				}
-				$config{$key} = $2;
+				my $value = $2;
+				if($value =~ /^".*"$/) {
+					$value =~ s/\\"/"/g;
+					$value =~ s/^"(.*)"$/$1/;
+				}
+				$config{$key} = $value;
 				$opt_info{$key}{file} = $file;
 				$opt_info{$key}{line} = $line_number;
 				
 				if ($key eq 'password') {
-			   	$save_password=1;
-		       }   
+					$save_password=1;
+				}
 			}
-		}
-		elsif($section eq 'contacts')
-		{
-			if(/^([\*~]?\d+)\s+(.*)$/)
-			{
+		} elsif($section =~ /^contacts(?:\s+(.*))?/) {
+			my $group = 'General';
+			$orig_section =~ /^contacts(?:\s+(.*))?/;
+			$group = $1 if(defined $1);
+			if(/^([\*~]?\d+)\s+(.*)$/) {
 				$uin = $1;
 				my $name = $2;
 				my $visible='no';
 				my $invisible='no';
-				if($uin =~ /^\*(\d+)/)
-				{
+				if($uin =~ /^\*(\d+)/) {
 					$uin = $1;
 					$visible = 'yes';
 					$invisible = 'no';
-					
-				} 
-				elsif ($uin =~ /^~(\d+)/)
-				{
+				} elsif ($uin =~ /^~(\d+)/) {
 					$uin = $1;
 					$invisible = 'yes';
 					$visible = 'no';
 				}
-				$contacts{$uin} = { 
-									name 	=> $name,
-									aliases => []
-								};
+				$contacts{$uin} = {
+						name	=> $name,
+						aliases => [],
+						group => $group
+						} unless exists $contacts{$uin};
 				$prefs{$uin} = {
-									ip		=> 'x.x.x.x',
-									status	=> 'Offline',
-									visible => $visible,
-									invisible => $invisible
-								} unless exists $prefs{$uin};
-
+						ip	=> 'x.x.x.x',
+						status	=> 'Offline',
+						visible => $visible,
+						invisible => $invisible,
+						lastseen => 'never'
+						} unless exists $prefs{$uin};
 				$contacts_info{$uin}{file} = $file;
 				$contacts_info{$uin}{line} = $line_number;
-			} else
-			{
-				if(($_ ne '') && ($uin ne ''))
-				{
+			} else {
+				if(($_ ne '') && ($uin ne '')) {
 					push (@{$contacts{$uin}{aliases}},$_);
 				}
 			}
-			
-	
 
-		}
-		elsif ($section eq 'events') 
-		{
+		} elsif ($section eq 'events') {
 			my $hook=parse_event_definition($_);
 			$hook->{file} = $file;
 			$hook->{line} = $line_number;
 			push @ExternalHooks, $hook if defined $hook;
-			if($hook->{eventspec} eq 'Normal') 
-			{
+			if($hook->{eventspec} eq 'Normal') {
 				$output .= "\n'Normal' is deprecated, use text_message instead\n";
 			}
-
-		}
-		elsif ($section eq 'sounds') {
-		   if (/^\s*(\S+)\s+(.*$)/) {
-		       my $event = $1;
-		       my $file = $2;
-		       my $type = $event;
-		       # convert glob-style notation to regexp
-		       $type=~s/([\\.\$])/\\$1/g;
-		       $type=~s/\?/\./g;
-		       $type=~s/\*/\.*/g;
-		       push @SoundHooks,{'eventspec'=>$event,
-		       'type'=>$type,'file'=>$file};
-		       
-		    }  
+		} elsif ($section eq 'sounds') {
+			if (/^\s*(\S+)\s+(.*$)/) {
+				my $event = $1;
+				my $file = $2;
+				my $type = $event;
+				# convert glob-style notation to regexp
+				$type=~s/([\\.\$])/\\$1/g;
+				$type=~s/\?/\./g;
+				$type=~s/\*/\.*/g;
+				push @SoundHooks,{'eventspec'=>$event,
+						'type'=>$type,
+						'file'=>$file};
+			}
 		} elsif ($section eq 'macroses') {
 			if (/([^ \t=]+)\s*=\s*([^ \t=]+)/) {
-				my ($cmd,$macro) =  (lc($1),$2);
+				my ($cmd,$macro) = (lc($1),$2);
 				if(in_array($cmd,[keys %_command_handlers]))
 				{
-					$output .=  "Command $cmd  already defined\n";
+					$output .= "Command $cmd already defined\n";
 					next;
 				}
 				$macroses{$cmd} = $macro;
 			}
 		} elsif ($section eq 'aliases') {
-			if (/([^ \t=]+)\s*=\s*([^ \t=]+)/) {
+			if (/([^ \t=]+)\s*=\s*(.+)/) {
 				my $new =$1;
 				my $old = $2;
-				die "Cannot alias nonexistent command $old\n"
-				if ! exists $_command_handlers{$old};
-				$helps{$new} = $helps{$old};		
-				$_command_handlers{$new} = $_command_handlers{$old};
+				my($cmd,@args) = tokenize($old);
+				die "Cannot alias nonexistent command $cmd\n" if ! exists $_command_handlers{$cmd};
+				# $helps{$new} = $helps{$old};		
+				# $_command_handlers{$new} = $_command_handlers{$old};
 				$aliases{$new}=$old;
 				$aliases_info{$new}{file} = $file;
 				$aliases_info{$new}{line} = $line_number;
-		  } else {
-		     die "Invalid alias syntax\n"; 
-		 }   
+			} else {
+				die "Invalid alias syntax\n";
+			}
 		} else {
-		   die "Invalid section in config file($file): $section\n";
-		    }   
+			die "Invalid section in config file($file): $section\n";
+		}
 	}
 	return $output;
 }
@@ -1948,44 +2227,40 @@ sub parse_config
 	my $output = '';
 	@ExternalHooks = ();
 	# my $home = $ENV{HOME};
-	if(!-e $ENV{'HOME'} . "/.vicq")
-	{
-		mkdir $ENV{'HOME'} . "/.vicq",0700;
+	if(!-e $ENV{'HOME'} . "/.vicq") {
+		mkdir $ENV{'HOME'} . "/.vicq",0755;
 	}
 
-	if( -e $config_file)
-	{
+	if( -e $config_file) {
 		$output .= parse_file($config_file);
-	} else
-	{
-		open CONF,"> $config_file" or die "Cann't create config file $config_file";
+	} else {
+		open CONF,"> $config_file" or die "Can't create config file $config_file";
 	}
-	if($config{colors})
-	{
+	if($config{colors}) {
 		$config{separator_color} = 'BLUE' if ($config{separator_color} eq '');
 		$config{separator_title_color} = 'CYAN' if ($config{separator_title_color} eq '');
 		$config{message_color} = 'LIGHT_BLUE' if ($config{message_color} eq '');
+		$config{version_color} = 'YELLOW' if ($config{version_color} eq '');
+		$config{prompt_color} = 'GRAY' if ($config{prompt_color} eq '');
 		$config{uin_color} = 'MAGENTA' if ($config{uin_color} eq '');
 		$config{nick_color} = 'MAGENTA' if ($config{nick_color} eq '');
 		$config{status_color} = 'YELLOW' if ($config{status_color} eq '');
 		$config{time_color} = 'YELLOW' if ($config{time_color} eq '');
 	}
-	if(! $config{separator_length})
-	{
+	if(! $config{separator_length}) {
 		$config{separator_length} = 70;
 	}
+
 	unless($config{mode} eq 'silent')
 	{
 		$config{mode} = 'normal';
 	}
 
-	if($config{encoding} ne 'koi')
-	{
+	if($config{encoding} ne 'koi') {
 		$config{encoding} = 'win' if ($config{encoding} ne 'translit');
 	}
 
-	if ($config{uin} eq '')
-	{
+	if (($config{uin} eq '') && (!defined $opts{'r'})) {
 		print "Use vicq -r if you want register new UIN\n";
 		print "UIN #:";
 		$_ = <>;
@@ -1994,46 +2269,47 @@ sub parse_config
 	}
 	&parse_sms_phonebook if $config{sms_phonebook};
 	$config{password} = '' unless exists $config{password};
-	if ($config{password} eq '')
-	{
+	if ($config{password} eq '') {
 		$config{password} = getpass("Password:");;
 		print "\n";
 	}
 	$config{prompt} = "vICQ>" unless $config{'prompt'};
-	$config{autoconnect} = 1 if  $config{autoconnect} eq  '';
+	$config{autoconnect} = 5 unless exists $config{autoconnect};
 	
-	unless (defined $config{log_type}){
+	unless(defined $config{log_type})
+	{
 		$config{log_type}='u';
-	}elsif ($config{log_type}){
+	} elsif ($config{log_type}) {
 		$config{log_type}.='u' unless ($config{log_type}=~/a/ || $config{log_type}=~/u/);
 	}
 	
-	if ($config{log_path}){
+	if ($config{log_path}) {
 		$config{log_path} = expand_file($config{log_path});
 		$config{log_path}.='/' unless $config{log_path}=~/\/$/;
-	}else{
+	} else {
 		$config{log_path}="$ENV{HOME}/.vicq/history/";
-		  }
+	}
+
 	unless( -e $config{log_path} || $config{log_path} eq $ENV{HOME})
 	{
 		mkdir "$config{log_path}",0700 or die "Can't create dir $config{log_path}.$!";
 	}
 
 	$config{disable_empty_separators}=0 unless defined $config{disable_empty_separators};
-
-	$config{micq_like_completion}=0 unless defined  $config{micq_like_completion};
-	
+	$config{micq_like_completion}=0 unless defined $config{micq_like_completion};
 	$config{autosplit}=0 unless defined $config{autosplit};
+	$config{spam_regexp}="" unless defined $config{spam_regexp};
 	$config_loaded = 1;
 	return $output;
 }
 
-#
+#################################
 # sub parse_sms_phonebook
 #
 # Reads and parse phonebook specified by sms_phonebook config parameter.
 #
-sub parse_sms_phonebook {
+sub parse_sms_phonebook
+{
 	return unless $config{sms_phonebook};
 	if(open SMSBOOK, $config{sms_phonebook}) {
 		my ($nick,$phone);
@@ -2046,7 +2322,7 @@ sub parse_sms_phonebook {
 		}
 	close SMSBOOK;
 	} else {
-		print "! Error: Can't open sms phomebook $config{sms_phonebook}\n";
+		print "! Error: Can't open sms phonebook $config{sms_phonebook}\n";
 	}
 }
 
@@ -2058,9 +2334,28 @@ sub parse_command
 	# print ">>$command<<\n\n";
 	#my($cmd,@args) = split /\s+/,$command;
 	my($cmd,@args) = tokenize($command);
+	if(isAlias($cmd)) {
+		my $cmdline = $aliases{$cmd};
+		if($cmdline !~ /\s/) {
+			# XXX This is temporary solution
+			$cmdline .= ' $*';
+		}
+		my @argv = ($cmd,@args);
+		$cmdline =~ s/\$(\d+)/$argv[$1]/g;
+		# if($cmdline =~ /\$(\w+)/)
+		# {
+			# my $var = $1;
+			# return "No such variable: \$$var" unless exists $config{$var};
+			# $cmdline =~ s/\$\Q$var\E/$config{$var}/g;
+		# }
+		my $all_args = $command;
+		$all_args =~ s/\s*\Q$cmd\E\s*//;
+		$cmdline =~ s/\$\*/$all_args/g;
+		
+		($cmd,@args) = tokenize($cmdline);
+	}
 	$cmd = lc($cmd);
-	if($gnu_readline)
-	{
+	if($gnu_readline) {
 		$term->remove_history($term->where_history) if (($term->history_get($term->where_history) eq $command));
 	}
 	return &{$_command_handlers{$cmd}}(@args) if (exists $_command_handlers{$cmd});
@@ -2071,28 +2366,90 @@ sub parse_command
 sub tick_handler
 {
 	my $err;
-	if($err = $icq->GetError())
-	{
+	if($err = $icq->GetError()) {
 		foreach(keys %contacts)
 		{
 			$prefs{$_}{status} = 'Offline';
 			$prefs{$_}{IP} = 'x.x.x.x';
 		}
 		Error($err);
+		return unless $config{autoconnect};
+	}
+
+	if($reconnect_timer && !$icq->{_Connected}) {
+		$reconnect_timer--;
+		$SIG{ALRM} = \&tick_handler;
+		alarm 1;
+		return;
+	}
+
+	if($config{autoconnect} && !$icq->{_Connected} && !$reconnect_timer) {
+		&connect_server;
+		$reconnect_timer = $config{autoconnect};
+		$SIG{ALRM} = \&tick_handler;
+		alarm 1;
 		return;
 	}
 	return unless $icq->{_LoggedIn};
-	alarm 1;
 	unless($keepalive++ % 60)
 	{
 		$icq->Send_Keep_Alive();
 	}
+
+	if(exists $config{away_timeout} && is_interactive() && ((time() - $lastactivity) > $config{away_timeout})) {
+		if($config{status} eq 'Online') {
+			set_status('Away');
+			my $st = color_status('Away');
+			output("status changed to $st due to inactivity");
+			redisplay();
+			$back_to_online=1;
+		}
+	}
+
+	if(exists $config{na_timeout} && is_interactive() && ((time() - $lastactivity) > $config{na_timeout})) {
+		if($config{status} eq 'Online' || $config{status} eq 'Away') {
+			set_status('Not_Available');
+			my $st = color_status('N/A');
+			output("status changed to $st due to inactivity");
+			redisplay();
+			$back_to_online=1;
+		}
+	}
+
+	&check_mailboxes if (exists $config{mailboxes});
+
 	&do_network if $icq->{_Connected};
+	$SIG{ALRM} = \&tick_handler;
+	alarm 1;
 }
 
-sub do_network {
-	if($icq)
-	{
+sub check_mailboxes
+{
+	my $mtime;
+													  
+	
+	foreach $mb ( keys(%mbox)) {
+		$mtime = (stat($mb))[9];
+		if ( $mbox{$mb}{mtime} < $mtime) {
+			$mbox{$mb}{mtime} = $mtime;
+			my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
+			# $min=$min>9?$min:"0$min";
+			# $mday=$mday>9?$mday:"0$mday";
+			# $hour=$hour>9?$hour:"0$hour";
+			# $sec=$sec>9?$sec:"0$sec";
+			my $time = sprintf("[%02d %02d:%02d:%02d] ", 
+				$mday, $hour, $min, $sec);
+			
+			$mtime = color_time($time) . $mbox{$mb}{msg};
+			output($mtime);
+			redisplay();
+		}
+	}
+}
+
+sub do_network
+{
+	if($icq) {
 			$icq->Execute_Once();
 			# $icq->{_Connected} or &disconnect;
 	}
@@ -2100,10 +2457,17 @@ sub do_network {
 
 sub GetStatus
 {
-	 my $st = shift;
-	 $st &= 0xffff;
-	 my $hexst =  sprintf '%04x',$st;
-	 return $Net::vICQ::_r_Status_Codes{$hexst};
+	my $st = shift;
+	$st &= 0xffff;
+	my $hexst = sprintf '%04x',$st;
+	return $_r_Status_Codes{$hexst};
+}
+
+sub isAlias
+{
+	my $cmd = shift;
+	return 1 if exists $aliases{$cmd};
+	return 0;
 }
 
 sub GetContact
@@ -2112,12 +2476,21 @@ sub GetContact
 	my $contact = $uin;
 	return $contact unless exists $contacts{$uin};
 	return $contact if $uin eq '';
-	if($contacts{$uin}{name} ne '')
-	{
+	if($contacts{$uin}{name} ne '') {
 		$contact = $contacts{$uin}{name};
 	}
 	return $contact;
 }
+
+sub GetGroup
+{
+	my $uin = shift;
+	$uin = GetUIN($uin);
+	return 'Unk' unless exists $contacts{$uin};
+	return 'General' unless exists $contacts{$uin}{group};
+	return $contacts{$uin}{group};
+}
+
 
 sub GetPhone
 {
@@ -2125,7 +2498,6 @@ sub GetPhone
 	foreach (keys %smsphones)
 	{
 		return $smsphones{$_} if(lc($_) eq lc($nick));
-		
 	}
 	return '';
 }
@@ -2153,33 +2525,32 @@ sub GetUIN
 	my $contact = shift;
 	foreach (keys %contacts)
 	{
+		if($contact eq '*Lui')
+		{
+			print lc($contacts{$_}{name}) . " eq " . lc($contact) . "\n";
+		}
 		return $_ if((lc($contacts{$_}{name}) eq lc($contact)) || in_array($contact, $contacts{$_}{aliases}));
-		
 	}
-	if($contact !~ /^\d+$/)
-	{
+	if($contact !~ /^\d+$/) {
 		return 0;
-	} else
-	{
+	} else {
 		return $contact;
 	}
-		
 }
 
 sub read_message
 {
 	my $text = '';
-	# my $term = new Term::ReadLine 'vICQ v0.2';
+	# my $mterm = new Term::ReadLine 'vICQ';
 	my $prompt = "msg# ";
 	print "Input '.' in the empty line to end message or '#' to cancel message\n";
 	while (1)
 	{
- 		$_ = is_interactive() ? $term->readline($prompt) : <STDIN>;
+		$_ = is_interactive() ? $term->readline($prompt) : <STDIN>;
 		$lastactivity = time();
 		chomp;
 		last if($_ eq '.');
-		if($_ eq '#') 
-		{
+		if($_ eq '#') {
 			$text = '';
 			last;
 		}
@@ -2198,12 +2569,11 @@ sub read_description
 	my $prompt = "desc# ";
 	while (1)
 	{
- 		$_ = is_interactive() ? $term->readline($prompt) : <STDIN>;
+		$_ = is_interactive() ? $term->readline($prompt) : <STDIN>;
 		chomp;
 		$lastactivity = time();
 		last if($_ eq '.');
-		if($_ eq '#') 
-		{
+		if($_ eq '#') {
 			$text = '#';
 			last;
 		}
@@ -2212,7 +2582,6 @@ sub read_description
 	}
 	$term->remove_history($term->where_history()) if($gnu_readline);
 	$text =~ s/\r\n$//;
-	if($text eq '') { return '#';}
 	return $text;
 }
 
@@ -2227,10 +2596,6 @@ sub read_url
 	return $text;
 }
 
-
-
-
-
 sub disconnect {
 	alarm 0;
 	$SIG{ALRM} = sub {};
@@ -2240,49 +2605,44 @@ sub disconnect {
 }
 
 sub MOTD {
-	 my($Object, $details) = @_;
-	 #the message of the day handler... (don't know why you'd want to catch this.. : )
-	 print "MOTD = [$details->{Web_Address}]\n";
-	 print "\n";
+	# the message of the day handler...
+	# don't know why you'd want to catch this.. :)
+	my($Object, $details) = @_;
+	print "MOTD = [$details->{Web_Address}]\n";
+	print "\n";
 }
 
-
 sub DisplayDetails {
-	 my($Object, $details) = @_;
-	 
-	 #very generic handler that just print's out all the bit's of data that get passed to it..
+	# very generic handler that just prints out
+	# all the bit's of data that get passed to it..
+	my($Object, $details) = @_;
 }
 
 sub MessageHandler
 {
 	my($Object, $details) = @_;
 	my $output = Invoke_Message_Handler($details);
-	if($output ne '')
-	{
+	if($output ne '') {
 		if( ($details->{MessageType} ne 'status_change') &&
-			($details->{MessageType} ne 'ack_offline'))
-		{
+			($details->{MessageType} ne 'ack_offline')) {
 			my $time = color_time($details->{Sent_Time});
 			$output = "--[ Sent: $time\n" . $output if($details->{Sent_Time});
 			$time = color_time($_ = localtime);
-			$output = "--[ Recieved: $time\n" . $output unless ($details->{Sent_Time});
+			$output = "--[ Received: $time\n" . $output unless ($details->{Sent_Time});
 			$output = separator() . $output;
 			beep($details->{MessageType},$last_message_from,$details->{text});
 		}
 		output($output);
-		if($details->{MessageType} eq "status_change")
-		{
-			$details->{text} = $details->{Status};
+		if($details->{MessageType} eq "status_change") {
+			$details->{text} = GetStatus($details->{Status}) ;
 		}
 		invoke_hook($details->{MessageType},$details->{Sender},
 					decode($details->{text}));
-		if($details->{Sender} && $config{auto_info})
-		{
+		if($details->{Sender} && $config{auto_info}) {
 			my $haveit = 0;
 			foreach (keys %contacts)
 			{
-				if($_ eq $details->{Sender})
-				{
+				if($_ eq $details->{Sender}) {
 					$haveit = 1;
 				}
 			}
@@ -2291,7 +2651,6 @@ sub MessageHandler
 		redisplay();
 	}
 }
-
 
 
 sub win2koi
@@ -2307,6 +2666,22 @@ sub koi2win
 	$s =~ tr/¿­½¤´§·¦¶³êãõëåîçûýúèÿæù÷áðòïìäöüñþóíéôøâà£ÊÃÕËÅÎÇÛÝÚÈßÆÙ×ÁÐÒÏÌÄÖÜÑÞÓÍÉÔØÂÀ/©´¥ºª¿¯\xb3²¨ÉÖÓÊÅÍÃØÙÇÕÚÔÛÂÀÏÐÎËÄÆÝß×ÑÌÈÒÜÁÞ¸éöóêåíãøùçõúôûâàïðîëäæýÿ÷ñìèòüáþ/;
 	return $s;
 }
+sub color_version
+{
+	my $version = shift;
+	return $version unless $config{colors};
+	$version = $colors{$config{version_color}} . $version . $colors{NORMAL};
+	return $version;
+}
+
+sub color_prompt
+{
+	my $prompt = shift;
+	return $prompt unless $config{colors};
+	$prompt = $colors{$config{prompt_color}} . $prompt . $colors{NORMAL};
+	return $prompt;
+}
+
 
 sub translit
 {
@@ -2320,20 +2695,20 @@ sub koi2rus
 	my @str = @_;
 
 	map { tr/\xA3\xB3\xC1-\xD0\xD2-\xD5\xD7-\xDA\xDC\xDF\xE1-\xF0\xF2-\xF5\xF7-\xFA\xFC\xFF/eEabcdefgxijklmnoprstuv`ize'ABCDEFGXIJKLMNOPRSTUV`IZE'/ } @str;
-	map { s/\xC0/ju/g  } @str;
-	map { s/\xD1/ja/g  } @str;
-	map { s/\xD6/zh/g  } @str;
-	map { s/\xDB/sh/g  } @str;
+	map { s/\xC0/ju/g } @str;
+	map { s/\xD1/ja/g } @str;
+	map { s/\xD6/zh/g } @str;
+	map { s/\xDB/sh/g } @str;
 	map { s/\xDD/sch/g } @str;
-	map { s/\xDE/ch/g  } @str;
-	map { s/\xE0/Ju/g  } @str;
-	map { s/\xF1/Ja/g  } @str;
-	map { s/\xF6/Zh/g  } @str;
-	map { s/\xFB/Sh/g  } @str;
+	map { s/\xDE/ch/g } @str;
+	map { s/\xE0/Ju/g } @str;
+	map { s/\xF1/Ja/g } @str;
+	map { s/\xF6/Zh/g } @str;
+	map { s/\xFB/Sh/g } @str;
 	map { s/\xFD/Sch/g } @str;
-	map { s/\xFE/Ch/g  } @str;
+	map { s/\xFE/Ch/g } @str;
 
-	return join ('', @str);
+	return join ('',@str);
 }
 
 
@@ -2357,12 +2732,13 @@ sub separator
 	my $title = shift;
 	return if ($config{disable_empty_separators} && $title eq "");
 	my $len = int(($config{separator_length} - length($title) - 2) / 2);
-	if($title ne '')
-	{
-		return   $colors{$config{separator_color}}."="x$len." ".$colors{$config{separator_title_color}}.$title.$colors{NORMAL}.$colors{$config{separator_color}}." "."="x$len."$colors{NORMAL}\n";
-	} else 
-	{
-				return $colors{$config{separator_color}}."="x$config{separator_length}."$colors{NORMAL}\n";
+
+	if($title ne '') {
+		return $colors{$config{separator_color}}."="x$len." ".$colors{$config{separator_title_color}}.$title.$colors{NORMAL}.$colors{$config{separator_color}}." "."="x$len."$colors{NORMAL}\n" if $config{colors};
+		return "="x$len." ".$title." "."="x$len."\n";
+	} else {
+		return $colors{$config{separator_color}}."="x$config{separator_length}."$colors{NORMAL}\n" if $config{colors};
+		return "="x$config{separator_length}."\n";
 	}
 }
 
@@ -2373,8 +2749,6 @@ sub color_time
 	$uin = $colors{$config{time_color}} . $uin . $colors{NORMAL};
 	return $uin;
 }
-
-
 
 sub color_uin
 {
@@ -2399,6 +2773,7 @@ sub color_status
 	$nick = $colors{$config{status_color}} . $nick . $colors{NORMAL};
 	return $nick;
 }
+
 sub color_message
 {
 	my $message = shift;
@@ -2415,7 +2790,6 @@ sub color_their_history
 	return $message;
 }
 
-
 sub color_my_history
 {
 	my $message = shift;
@@ -2424,60 +2798,50 @@ sub color_my_history
 	return $message;
 }
 
-
-
-
 sub color_entries
 {
 	my ($ref) = shift;
 	foreach (@{$ref})
 	{
-		if(/^> /)
-		{
+		if(/^> /) {
 			$_ = &color_their_history($_);
-		} else
-		{
+		} else {
 			$_ = &color_my_history($_);
 		}
-	
 	}
 }
 
 sub beep
 {
-	 my ($event_type,$uin,$text) = @_;
+	my ($event_type,$uin,$text) = @_;
 
-
-	if($config{player} eq '')
-	{
+	if($config{player} eq '') {
 		print "\x07";
-	} else
-	{
-	 	for my $hook (@SoundHooks) 
+	} else {
+		for my $hook (@SoundHooks)
 		{
-			if ($event_type=~$hook->{type}) 
-			{
-		     		my $cmd = $hook->{file};
-					$cmd=~s/%([%eutn])/&hook_subst($1,$event_type,$uin,$text)/eg;
+			if ($event_type=~$hook->{type}) {
+				my $cmd = $hook->{file};
+				$cmd=~s/%([%eutn])/&hook_subst($1,$event_type,$uin,$text)/eg;
 				my $cmdline = $config{player};
 				$cmdline =~ s/\%f/$cmd/;
-					system $cmdline;
-		   		return;
-			}     
-	 	}
-		
+				system $cmdline;
+				return;
+			}
+		}
+
 	}
 }
 
+##############################
+# Logging events
 
 sub log_outgoing_event
 {
 	my $uin = shift;
 	my $message = shift;
-	 log_event($uin,$message,'<');	
+	log_event($uin,$message,'<');	
 }
-
-
 
 sub log_incoming_event
 {
@@ -2486,7 +2850,8 @@ sub log_incoming_event
 	log_event($uin,$message,'>');	
 }
 
-sub log_event{
+sub log_event
+{
 	my ($uin,$message,$format) = @_;
 	return unless $config{log_type};
 	my $now_string = localtime;
@@ -2501,216 +2866,205 @@ sub log_event{
 	print LOG $message;
 	print LOG "\n" if $config{log_type}=~/n/;
 	close LOG;
-	if ($config{log_type}=~/l/ && $config{log_type}=~/u/)
-	{
+	if ($config{log_type}=~/l/ && $config{log_type}=~/u/) {
 		my $name=$contacts{$uin}{name} if exists $contacts{$uin};
 		eval {
 			my $cwd = getcwd();
-			chdir $config{log_path}; 
+			chdir $config{log_path};
 			symlink "$uin.log","$name.log" unless (-e "$name.log");
 			chdir $cwd;
 		}
 	}
 }
+
 #
 # Is called when something happens. Searches for external program to
 # invoke in @ExternalHooks
 #
-sub invoke_hook {
-	 my ($event_type,$uin,$text) = @_;
-	 my $nick=GetContact($uin);
-	 my $status=short_status($config{status});
-	 #print "TYPE='$event_type' UIN='$uin' TEXT='$text' STATUS='$status'\n";
-	 for my $hook (@ExternalHooks) {
-		 #print "HOOK=".Dumper($hook)."\n";
+sub invoke_hook
+{
+	my ($event_type,$uin,$text) = @_;
+	my $nick=GetContact($uin);
+	my $status=short_status($config{status});
+	#print "TYPE='$event_type' UIN='$uin' TEXT='$text' STATUS='$status'\n";
+	for my $hook (@ExternalHooks) {
+		#print "HOOK=".Dumper($hook)."\n";
 		if ($event_type=~/$hook->{type}/i && $nick=~/$hook->{nick}/i && $status=~/$hook->{status}/i && $hook->{active}) {
 			foreach my $command (@{$hook->{command}}){
 				my $cmdline = $command;
-                $qtext = $text;
-                if($cmdline =~ /^\s*!/)
-                {
-                    $ENV{VICQ_MESSAGE} = $qtext;
-                    $qtext = '$VICQ_MESSAGE';
-                }
-				$cmdline=~s/%([%eutnsEUTNS])/&hook_subst($1,$event_type,$uin,$qtext)/eg;
-				# print ">> $cmdline\n";
+				$qnick = $nick;
+				$qtext = $text;
+				if($cmdline =~ /^\s*!/) {
+					$ENV{VICQ_MESSAGE} = $qtext;
+					$qtext = '$VICQ_MESSAGE';
+					# $qtext =~ s/\n/ /g;
+					# $qtext =~ s/([;<>\*\|`&\$!#\(\)\[\]\{\}:'"])/\\$1/g;
+					$qnick =~ s/([;<>\*\|`&\$!#\(\)\[\]\{\}:'"])/\\$1/g;
+				}
+				$cmdline=~s/%([%eutnsEUTNS])/&hook_subst($1,$event_type,$uin,$qnick,$qtext)/eg;
 				my $res = parse_command($cmdline);
 				print "\n",$res,"\n" if($config{debug_hooks});
 			}
 			return unless $hook->{nonstop};
-		}     
+		}
 
-	 }
-}    
-
-sub hook_subst {
-	my ($specifier,$event,$uin,$text)=@_;
-  if ($specifier eq '%') {
-		return $specifier;
-  } elsif ($specifier eq 'e') {
-		return $event;
-  } elsif ($specifier eq 'u') {
-		return $uin;
-  } elsif ($specifier eq 'U') {
-		return color_uin($uin);
-  } elsif ($specifier eq 'n') {
-	  my $nick=GetContact($uin);
-	  return $uin unless $nick;
-	  return ("$nick");
-  } elsif ($specifier eq 'N') {
-	  my $nick=GetContact($uin);
-	  return $uin unless $nick;
-	  return color_nick($nick);
- } elsif ($specifier eq 't') {
-	  return "$text";
- } elsif ($specifier eq 'T') {
-	  return color_message($text);
- }elsif ($specifier eq 's'){
-	 return $prefs{$uin}{status};
- }elsif ($specifier eq 'S'){
-	 return color_status($prefs{$uin}{status});
- } else {
-	  die "Unknown format specifier $specifier in invoke_hook.";
- }
-} 
-
-sub redisplay()
-{
-	if($gnu_readline)
-	{
-		# if($redisplay)
-		# {
-				$term->forced_update_display();
-		# }
 	}
 }
 
+sub hook_subst
+{
+	my ($specifier,$event,$uin,$nick,$text)=@_;
 
-sub do_reply 
-{ 
-			my @args = @_;
-			my $uin = shift @args;
-			my $msg = '';
-			my ($details);
-			if(!$uin)
-			{
-				return 'You didn\'t have UIN for this operation';
-			}
-			if ($uin =~ /^sms.(\d+)/) {
-			    my $target = $1;
-				print "Composing message SMS to $target:\n";
-				$msg = read_message();
-				$last_message_to = $uin;
-				my %details = ( SMS_Dest_Number  => $target,
-							MessageType => 'SMS',
-							text =>  translit($msg),
-							delivery_receipt=>'Yes'								
-							
+	if ($specifier eq '%') {
+		return $specifier;
+	} elsif ($specifier eq 'e') {
+		return $event;
+	} elsif ($specifier eq 'u') {
+		return $uin;
+	} elsif ($specifier eq 'U') {
+		return color_uin($uin);
+	} elsif ($specifier eq 'n') {
+		return "$nick";
+	} elsif ($specifier eq 'N') {
+		return color_nick($nick);
+	} elsif ($specifier eq 't') {
+		return "$text";
+	} elsif ($specifier eq 'T') {
+		return color_message($text);
+	} elsif ($specifier eq 's'){
+		return $prefs{$uin}{status};
+	} elsif ($specifier eq 'S'){
+		return color_status($prefs{$uin}{status});
+	} else {
+		die "Unknown format specifier $specifier in invoke_hook.";
+	}
+}
+
+sub redisplay()
+{
+	if($gnu_readline) {
+		my $v = $term->Attribs->{library_version};
+		my ($min, $maj) = (0, 0);
+		if($v =~ /(\d+)\.(\d+)/) {
+			($min,$maj) = ($1,$2);
+		}
+		if(($maj >= 4) && ($min > 1)) {
+				$term->set_prompt(make_prompt($config{prompt}));
+		}
+
+		$term->forced_update_display();
+	}
+}
+
+sub do_reply
+{
+	my @args = @_;
+	my $uin = shift @args;
+	my $msg = '';
+	my ($details);
+	if(!$uin) {
+		return "You should receive a message first";
+	}
+	if ($uin =~ /^sms.(\d+)/) {
+		my $target = $1;
+		print "Composing message SMS to $target:\n";
+		$msg = read_message();
+		$last_message_to = $uin;
+		my %details = ( SMS_Dest_Number =>	$target,
+				MessageType =>		'SMS',
+				text =>			translit($msg),
+				delivery_receipt =>	'Yes'
 				);
-				$icq->Send_Command("Cmd_Srv_Message", \%details);
-			 	log_outgoing_event("sms.$target","Send SMS to $target\n$msg\n");
-				return "You sent SMS message to $target\n";
-			
-			}    
-			my $nick = GetContact($uin);
-			$nick = color_nick($nick);
-			if($#args>-1)
-			{
-				$msg = join ' ',@args;
-			} else
-			{
-				print "Composing message to $nick:\n";
-				$msg = read_message();
-	
-			}
-			$last_message_to = $uin;
-			if($msg eq '') { return "Message canceled"; }
-			my %details = ( uin => $uin,
-							MessageType => 'text',
-							text =>  encode($msg)
-			);
-			$icq->Send_Command("Cmd_Send_Message", \%details);
+		$icq->Send_Command("Cmd_Srv_Message", \%details);
+		log_outgoing_event("sms.$target","Send SMS to $target\n$msg\n");
+		return "You've sent SMS message to $target\n";
+	}
 
-			$nick = GetContact($uin);
-			$nick = color_nick($nick);
-			log_outgoing_event($uin,"Replied to message from $nick\n$msg\n");
-			return "You sent instant message to $nick";
+	my $nick = GetContact($uin);
+	$nick = color_nick($nick);
+	if($#args>-1) {
+		$msg = join ' ',@args;
+	} else {
+		print "Composing message to $nick:\n";
+		$msg = read_message();
+	}
+	$last_message_to = $uin;
+	if($msg eq '') { return "Message canceled"; }
+	my %details = ( uin =>		$uin,
+			MessageType =>	'text',
+			text =>		encode($msg)
+			);
+	$icq->Send_Command("Cmd_Send_Message", \%details);
+	$nick = GetContact($uin);
+	$nick = color_nick($nick);
+	log_outgoing_event($uin,"Replied on message from $nick\n$msg\n");
+	return "You sent instant message to $nick";
 }
 
 sub get_my_info
 {
-	my %details = ( 
-					MessageType => "Self_Info_Request",
-	);
+	my %details = (
+			MessageType => "Self_Info_Request",
+			);
 	$icq->Send_Command("Cmd_Srv_Message", \%details);
 	print "Self info request sent\n";
 }
+	return ' ' if($spec eq '.');
 
 sub set_my_info
 {
 	my $uin = $config{uin};
 	my $dir = $ENV{'HOME'} . "/.vicq/wpinfo";
-	if(! -e $dir)
-	{
-		if(!mkdir ($dir,0700))
-		{
-			print "Cann't create directory $dir\n";
+	if(! -e $dir) {
+		if(!mkdir ($dir,0700)) {
+			print "Can't create directory $dir\n";
 			return;
 		}
 	}
-	
+
 	my $fname = $dir . "/$uin.nfo";
-	if(!-e $fname)
-	{
-		if(open FILE,"> $fname")
-		{
+	if(!-e $fname) {
+		if(open FILE,"> $fname") {
 			print FILE "Nickname: \n";
 			print FILE "Firstname: \n";
 			print FILE "Lastname: \n";
 			print FILE "Email: \n";
 			close FILE;
-		} else
-
-		{
-			print "Cann't create file $fname \n";
+		} else {
+			print "Can't create file $fname \n";
 			return;
 		}
-	} 
+	}
+
 	my $editor = $config{editor} || $ENV{'EDITOR'};
 	system("$editor $fname");
-	if(open FILE,"< $fname")
-	{
+	if(open FILE,"< $fname") {
 		my @lines = <FILE>;
 		close FILE;
 		chomp @lines;
 		foreach (@lines)
 		{
-			if(/^(\w+):\s+(.*)/)
-			{
+			if(/^(\w+):\s+(.*)/) {
 				$wpinfo{$1} = $2;
 				print "$1: $2\n";
 			}
 		}
-		my %details = ( 
-					MessageType => "Set_Main_WP_Info",
-					_nickname => encode($wpinfo{'Nickname'}),
-					_firstname => encode($wpinfo{'Firstname'}),
-					_lastname => encode($wpinfo{'Lastname'}),
-					_email => encode($wpinfo{'Email'})
-		);
+		my %details = (
+				MessageType =>	"Set_Main_WP_Info",
+				_nickname =>	encode($wpinfo{'Nickname'}),
+				_firstname =>	encode($wpinfo{'Firstname'}),
+				_lastname =>	encode($wpinfo{'Lastname'}),
+				_email =>	encode($wpinfo{'Email'})
+				);
 		print "Submit this info to ICQ directory(y/n)? ";
 		my $c = <>;
 		chomp $c;
 		$c = lc $c;
 		$icq->Send_Command("Cmd_Srv_Message", \%details) if ($c eq 'y');
-	} else
-	{
-		print "Cann't open file $fname\n";
+	} else {
+		print "Can't open file $fname\n";
 	}
-	
 }
-
-
 
 sub get_wp_info
 {
@@ -2720,18 +3074,16 @@ sub get_wp_info
 	if(!$uin) { return "No such nick"; }
 	my $nick = GetContact($uin);
 	$nick = color_nick($nick);
-	my %details = ( 
-					MessageType => "Get_WP_Info",
-					TargetUIN => $uin
-	);
+	my %details = (
+			MessageType =>	"Get_WP_Info",
+			TargetUIN =>	$uin
+			);
 	$requested_uin = $uin;
 	$icq->Send_Command("Cmd_Srv_Message", \%details);
 	$uin = color_uin($uin);
-	print "White pages info request for $uin sent\n";
-	log_outgoing_event($uin,"White pages info request for $uin sent\n");
+	return "White pages info request for $uin has been sent\n";
+	log_outgoing_event($uin,"White pages info request for $uin has been sent\n");
 }
-
-
 
 sub get_info
 {
@@ -2741,15 +3093,15 @@ sub get_info
 	if(!$uin) { return "No such nick"; }
 	my $nick = GetContact($uin);
 	$nick = color_nick($nick);
-	my %details = ( 
-					MessageType => "user_short_info_request",
-					TargetUIN => $uin
-	);
+	my %details = (
+			MessageType =>	"user_short_info_request",
+			TargetUIN =>	$uin
+			);
 	$requested_uin = $uin;
 	$icq->Send_Command("Cmd_Srv_Message", \%details);
 	$uin = color_uin($uin);
-	print "Info request for $uin sent\n";
-	log_outgoing_event($uin,"Info request for $uin sent\n");
+	print "Info request for $uin has been sent\n";
+	log_outgoing_event($uin,"Info request for $uin has been sent\n");
 }
 
 sub prompt_subst
@@ -2759,7 +3111,8 @@ sub prompt_subst
 	$min = sprintf('%02d', $min);
 	$sec = sprintf('%02d', $sec);
 	$hour = sprintf('%02d', $hour);
-	return $status if($spec eq 'S');
+	return $status if ($spec eq 'S' &&  !$config{colors});
+	return $status.$colors{$config{prompt_color}} if ($spec eq 'S');
 	return $uin if($spec eq 'U');
 	return '%' if($spec eq '%');
 	return $sec if($spec eq 's');
@@ -2768,18 +3121,28 @@ sub prompt_subst
 	return $spec;
 }
 
+sub is_short_status
+{
+	my $st = shift;
+	my @short_statuses = values %_Short_Status_Desc;
+	return in_array($st, \@short_statuses);
+}
+
 sub short_status
 {
 	my $status = shift;
-	return $Net::vICQ::_Short_Status_Desc{$status};
+	$status = $_Status_Codes{$status};
+	my $hexst = sprintf '%04x',$status;
+	return $_Short_Status_Desc{$hexst};
 }
 
 sub make_prompt
 {
 	my $template = shift;
-	my $uin =  color_uin($icq->{_UIN});
-	my $status = color_status($icq->{_LoggedIn} ? short_status($config{status}) :  'off');
-	$template =~ s/%([%SUnsmhdDM])/&prompt_subst($1,$uin,$status)/eg;
+	my $uin = color_uin($icq->{_UIN});
+	my $status = color_status($icq->{_LoggedIn} ? short_status($config{status}) : 'off');
+	$template =~ s/%([%SUnsmhdDM.])/&prompt_subst($1,$uin,$status)/eg;
+        $template = &color_prompt($template);
 	$template =~ s/(\033.*?m)/$ignore_start$1$ignore_stop/g;
 	return $template;
 }
@@ -2788,14 +3151,14 @@ sub send_text_message
 {
 	my ($uin,$msg) = @_;
 	$last_message_to = $uin;
-	my %details = ( uin => $uin,
-					MessageType => 'text',
-					text =>  encode($msg)
-	);
+	my %details = ( uin =>		$uin,
+			MessageType =>	'text',
+			text =>		encode($msg)
+			);
 	add_to_uin_history($uin);
 	$icq->Send_Command("Cmd_Send_Message", \%details);
 	my $nick = GetContact($uin);
-	log_outgoing_event($uin,"Send message to $nick\n$msg\n");
+	log_outgoing_event($uin,"Message has been sent to $nick\n$msg\n");
 	my $t = $keepalive;
 }
 
@@ -2803,49 +3166,75 @@ sub set_status
 {
 	my ($status)= shift;
 	my ($details);
-	if(!&connect_server)
-	{
-		$details->{Status} = $status;
+	if(!&connect_server) {
 		$config{status} = $status;
+		$config{status} = 'i' . $status if $invisible && $_Status_Codes{$status} < 0x100;
+		$status = $_Status_Codes{$config{status}};
+		$details->{Status} = $status;
+		my @VisList;
+		my @InvisList;
+
+		foreach (keys %contacts)
+		{
+			push (@VisList, $_) if ($prefs{$_}{visible} eq 'yes');
+			push (@InVisList, $_) if ($prefs{$_}{invisible} eq 'yes');
+		}
+
+		if($config{status} eq "Invisible")
+		{
+			add_to_visible_list(\@VisList);
+			# upload visible list
+		} 
 		$icq->Send_Command("Cmd_GSC_Set_Status", $details);
-	} 
+		if($config{status} ne "Invisible")
+		{
+			# upload invisible list
+			add_to_invisible_list(\@InvisList);
+		} 
+		$SIG{ALRM} = \&tick_handler;
+		alarm 1;
+		my $hexst = sprintf "%04x",$status;
+	}
 }
 
 sub send_url_message
 {
 	my ($uin,$url,$desc) = @_;
 	$last_message_to = $uin;
-	if($desc eq '#') { return 'URL canceled!'; }
-		my %details = ( uin => $uin,
-						MessageType => 'url',
-						URL =>  encode($url),
-						Description => encode($desc)
-		);
-		add_to_uin_history($uin);
+	if($desc eq '#') {
+		return "URL canceled!";
+	}
+	my %details = ( uin =>		$uin,
+			MessageType =>	'url',
+			URL =>		encode($url),
+			Description =>	encode($desc)
+			);
+	add_to_uin_history($uin);
 	$icq->Send_Command("Cmd_Send_Message", \%details);
 	my $nick = GetContact($uin);
-	log_outgoing_event($uin,"Send URL message to $nick\nURL: $url\nDecription:\n$desc\n");
+	log_outgoing_event($uin,"URL message has been sent to $nick\nURL: $url\nDecription:\n$desc\n");
 
 }
 
 sub history
 {
-	my ($uin, $messages) =  @_;
+	my ($uin, $messages) = @_;
 	return unless $config{log_type};
 	$uin =~ s/\033\[[10];3.m//g;
 	my $pager = $ENV{'PAGER'} || 'less -R';
 	my $home = $ENV{HOME};
 	my $fname=($config{log_type}=~/a/)?'vicq.log':"$uin.log";
-	if(!(open LOG,"< $config{log_path}$fname"))
-	{
+	if(!(open LOG,"< $config{log_path}$fname")) {
 		print "No history file for $uin\n";
 		return;
 	}
+
 	my $messages_count=0;
 	while(<LOG>)
 	{
 		$messages_count++ if(/^--\[/);
 	}
+
 	seek LOG,0,'SEEK_SET';
 	$messages = $messages_count if($messages < 0);
 	while($messages_count > $messages)
@@ -2853,19 +3242,21 @@ sub history
 		$_ = <LOG>;
 		$messages_count-- if(/^--\[/);
 	}
+
 	my @lines = <LOG>;
 	while(($lines[0] !~ /^--\[/) && @lines)
 	{
 		shift @lines;
 	}
-	if(@lines)
-	{
+
+	if(@lines) {
 		my $data = join '',@lines;
 		my @entries = split /--\[/,$data;
 		@entries = reverse @entries;
 		chomp @entries;
 		color_entries(\@entries) if($config{colored_history});
-		$uin = color_uin($uin) if($config{colored_history});
+		$uin = GetContact($uin);
+		$uin = color_nick($uin) if($config{colored_history});
 		local $SIG{PIPE}= 'IGNORE';
 		open PAGER,"| $pager";
 		print PAGER "History for $uin\n";
@@ -2874,7 +3265,6 @@ sub history
 	}
 	close LOG;
 }
-
 
 sub remove_from_visible_list
 {
@@ -2891,8 +3281,6 @@ sub add_to_generic_list
 	$details->{GenericList} = $ref;
 	$icq->Send_Command("Cmd_BOS_Add_GenericList", $details);
 }
-
-
 
 sub add_to_visible_list
 {
@@ -2920,14 +3308,9 @@ sub add_to_invisible_list
 
 sub add_to_contact_list
 {
-	my ($uin,$nick) = @_;
-	my ($details);
-	$details->{UIN} = $uin;
-	$details->{Nick} = $nick;
-	$icq->Send_Command("Cmd_Unk");
-	$icq->Send_Command("Cmd_Add_List", $details);
+	my ($uin) = @_;
+	$icq->Send_Command("Cmd_CTL_UploadList", {ContactList=>[$uin]});
 }
-
 
 
 sub search_by_email
@@ -2938,7 +3321,26 @@ sub search_by_email
 	$details->{MessageType} = "WP_Full_Request";
 	$icq->Send_Command("Cmd_Srv_Message",$details);
 	$email = color_nick($email);
-	return "Search request for $email sent!";
+	return "Search request for $email has been sent!";
+}
+
+sub search_by
+{
+	my @args = @_;
+	my ($details);
+	if(!@args) {
+	}
+	while(@args)
+	{
+		my $field = shift @args;
+		my $request = shift @args;
+		my $sfield = '_' . lc($field);
+		return "Unknown field $field" unless in_array($sfield,\@WPFields);
+		$details->{$sfield} = $request;
+	}
+	$details->{MessageType} = "WP_Full_Request";
+	$icq->Send_Command("Cmd_Srv_Message",$details);
+	return "Search request has been sent!";
 }
 
 sub save_info
@@ -2949,31 +3351,28 @@ sub save_info
 	{
 		if(!mkdir ($dir,0700))
 		{
-			print "Cann't create directory $dir\n";
+			print "Can't create directory $dir\n";
 			return;
 		}
 	}
 	
 	my $fname = $dir . "/$uin.nfo";
 
-	if(open FILE,"> $fname")
-	{
-			print FILE "Nickname: $nick\n";
-			print FILE "Firstname: $firstname\n";
-			print FILE "Lastname: $lname\n";
-			print FILE "Email: $email\n";
-			print FILE "Birth date: $bdate\n";
-			close FILE;
-	} else
-
-	{
-			print "Cann't create file $fname \n";
-			return;
+	if(open FILE,"> $fname") {
+		print FILE "Nickname: $nick\n";
+		print FILE "Firstname: $firstname\n";
+		print FILE "Lastname: $lname\n";
+		print FILE "Email: $email\n";
+		print FILE "Birth date: $bdate\n";
+		close FILE;
+	} else {
+		print "Can't create file $fname \n";
+		return;
 	}
 	my $name = GetContact($uin);
 	eval {
 		my $cwd = getcwd();
-		chdir $dir; 
+		chdir $dir;
 		symlink "$uin.nfo","$name.log" unless (-e "$name.log");
 		chdir $cwd;
 	} if ($name ne '');
@@ -2985,11 +3384,12 @@ sub wp_field
 	return decode($wp{$uin}->{$field_name});
 }
 
-sub get_gender 
+sub get_gender
 {
 	my $s = shift;
-	return 'Female' if($s==1);
-	return 'Male';
+	return "Female" if($s==1);
+	return "Male" if($s==2);
+	return "I don't know";
 }
 
 sub build_wp_info
@@ -3034,7 +3434,6 @@ sub birthday_alert
 
 	($foo,$foo,$foo,$d,$m,$y,$foo,$foo,$foo) = localtime(time());
 	my $today = POSIX::mktime(0,0,0,$d,$m,$y);
-
 	$warndays = ($config{birthday_warning} or 3);
 
 	for $wpfile (@wpfiles)
@@ -3042,26 +3441,23 @@ sub birthday_alert
 		open(WPFILE,"<$dir/$wpfile") or next;
 		$bdstring = (grep { /Birth date/ } (<WPFILE>))[0] || '';
 		close(WPFILE);
-		if ( $bdstring =~ /(\d+)\/(\d+)\/\d+/ )
-		{
-		    $bdstring = $&;
+		if ( $bdstring =~ /(\d+)\/(\d+)\/\d+/ ) {
+			$bdstring = $&;
 			$time_left = POSIX::mktime(0,0,0,$1,($2-1),$y)-$today;
 			$time_left = $time_left/60/60/24;
 
-			if ($time_left >= 0 && $time_left < $warndays) 
-			{
+			if ($time_left >= 0 && $time_left < $warndays) {
 				$wpfile =~ /^\d+/;
 				$uin = $&;
 				$nick = GetContact($uin);
 				print color_nick($nick)." [".color_uin($uin)."] ";
-				if ($time_left > 0) 
-				{
+				if ($time_left > 0) {
 					if ($time_left > 1) {
 					print "will have Birthday in $time_left days (born $bdstring)\n";
-					} else { 
+					} else {
 					print "will have Birthday tomorrow.\n";
 					}
-				} else { print "have a Birthday today!\n"; }
+				} else { print "has Birthday today!\n"; }
 			}
 		}
 	}
@@ -3073,12 +3469,12 @@ sub is_interactive
 	return -t STDIN;
 }
 
-sub tab{
+sub tab
+{
 	@current_uin_history=@uin_history unless @current_uin_history;
 	return unless (@current_uin_history && $gnu_readline);
 	my $s=$term->Attribs->{line_buffer};
-	if ($s =~ /^\s*(msg\s+.+\/?)\s*$/) 
-	{
+	if ($s =~ /^\s*(msg\s+.+\/)?\s*$/){
 		my $uin=pop @current_uin_history;
 		unshift @current_uin_history, $uin;
 		$term->clear_message();
@@ -3088,15 +3484,18 @@ sub tab{
 		$term->Attribs->{point}=$term->Attribs->{end};
 		$term->redisplay();
 	}
+	return '';
 }
 
-sub add_to_uin_history{
+sub add_to_uin_history
+{
 	my $uin=GetContact(shift);
 	my $i=0;
-	foreach (@uin_history){
-		if ($uin eq $_){
-	 splice(@uin_history,$i,1);
-	 last
+	foreach (@uin_history)
+	{
+		if ($uin eq $_) {
+			splice(@uin_history,$i,1);
+			last;
 		}
 		$i++;
 	}
@@ -3105,125 +3504,134 @@ sub add_to_uin_history{
 	return "";
 }
 
-sub output{
+sub output
+{
 	my $s=join("",@_);
 	$s =~ s/\r\n/\n/g;
-	print "\033M";
-	chomp($s);
-	print "\n";
-	print "\033[2K";
-	print "$s\n";
+	if($termcap) {
+		print $termcap->Tputs('dl', 1);
+		chomp($s);
+		print "\n";
+		# print $termcap->Tputs('up', 1);
+		# print $termcap->Tputs('up', 1);
+		print $termcap->Tgoto('up', 2);
+		print "$s\n";
+	} else {
+		print "\n$s\n";
+	}
 	return;
 }
 
-
-sub decompose 
+sub decompose
 {
-	 my ($delimexp,$line,$num,$keep,$quotehash,$metaexp,$unmatched) = @_;
+	my ($delimexp,$line,$num,$keep,$quotehash,$metaexp,$unmatched) = @_;
 
-	 my $nevermatches = "(?!a)a"; # Anyone have other ideas?
-	 if (!defined($delimexp) or $delimexp eq ' ') { $delimexp = '\s+'; }
-	 if (!defined($num)) { $num = -1; }
-	 if (!defined($keep)) { $keep = 1; }
-	 if (!defined($quotehash)) { $quotehash = { "'" => "'", "\"" => "\"" }; }
-	 if (!defined($metaexp)) { $metaexp = $nevermatches; }
+	my $nevermatches = "(?!a)a"; # Anyone have other ideas?
+	if (!defined($delimexp) or $delimexp eq ' ') { $delimexp = '\s+'; }
+	if (!defined($num)) { $num = -1; }
+	if (!defined($keep)) { $keep = 1; }
+	if (!defined($quotehash)) {
+		$quotehash = { "'" => "'", "\"" => "\"" };
+	}
+	if (!defined($metaexp)) { $metaexp = $nevermatches; }
 
-	 # See if metacharacters has any parenthesized subexpressions:
-	 my @matches = ('x' =~ m/$metaexp|(.)/);
-	 if (scalar(@matches) > 1) { 
+	# See if metacharacters has any parenthesized subexpressions:
+	my @matches = ('x' =~ m/$metaexp|(.)/);
+	if (scalar(@matches) > 1) {
 		die "Metacharacter regexp '$metaexp' in decompose may not contain ().";
 		return undef;
-	 }
+	}
 
-	 # Remember if delimexp came with any parenthesized subexpr, and
-	 # arrange for it to have exactly one so we know what each piece in
-	 # the match below means:
+	# Remember if delimexp came with any parenthesized subexpr, and
+	# arrange for it to have exactly one so we know what each piece in
+	# the match below means:
 
-	 my $saveDelimiters = 0;
-	 @matches = ('x' =~ m/$delimexp|(.)/);
-	 if (scalar(@matches) > 2) {
+	my $saveDelimiters = 0;
+	@matches = ('x' =~ m/$delimexp|(.)/);
+	if (scalar(@matches) > 2) {
 		die "Delimiter regexp '$delimexp' in decompose may " .
 		"contain at most 1 ().";
 		return undef;
-	 }
-	 if (scalar(@matches) == 2) {
+	}
+	if (scalar(@matches) == 2) {
 		$saveDelimiters = 1;
-	 } else {
+	} else {
 		$delimexp = "($delimexp)";
-	 }
+	}
 
-	 my @pieces = ('');
-	 my $startNewPiece = 0;
-	 my $freshPiece = 1;
-	 my $uquote = 0;
+	my @pieces = ('');
+	my $startNewPiece = 0;
+	my $freshPiece = 1;
+	my $uquote = 0;
 
-	 my %qhash = %{$quotehash};
-	 #generate $quoteexp and fix up the closers:
-	 my $quoteexp = $nevermatches;
-	 for my $opener (keys %qhash) {
+	my %qhash = %{$quotehash};
+	#generate $quoteexp and fix up the closers:
+	my $quoteexp = $nevermatches;
+	for my $opener (keys %qhash) {
 		$quoteexp .= '|' . quotemeta($opener);
-		 $qhash{$opener} = quotemeta($qhash{$opener});
-	 }
+		$qhash{$opener} = quotemeta($qhash{$opener});
+	}
 
-	 while ($line) {
+	while ($line) {
 		if ($startNewPiece) {
 			push @pieces, '';
-		    $startNewPiece = 0;
-		    $freshPiece = 1;
-		 }
-		 if (scalar(@pieces) == $num) { last; }
-		 # $delimexp is unparenthesized below because we have
-		 # already arranged for it to contain exactly one backref ()
+			$startNewPiece = 0;
+			$freshPiece = 1;
+		}
+		if (scalar(@pieces) == $num) { last; }
+		# $delimexp is unparenthesized below because we have
+		# already arranged for it to contain exactly one backref ()
 		my ($prefix,$delimiter,$quote,$meta,$rest) =
-		   ($line =~ m/^((?:[^\\]|\\.)*?)(?:$delimexp|($quoteexp)|($metaexp))(.*)$/s);
-		 if (!$keep and defined($prefix)) {
+				($line =~ m/^((?:[^\\]|\\.)*?)(?:$delimexp|($quoteexp)|($metaexp))(.*)$/s);
+		if (!$keep and defined($prefix)) {
 			# remove backslashes in unquoted part:
 			$prefix =~ s/\\(.)/$1/g;
-		 }
-		 if (defined($delimiter)) {
-		    $pieces[scalar(@pieces)-1] .= $prefix;
-		    if ($saveDelimiters) {
+		}
+		
+		if (defined($delimiter)) {
+			$pieces[scalar(@pieces)-1] .= $prefix;
+			if ($saveDelimiters) {
 				if (length($pieces[scalar(@pieces)-1]) or !$freshPiece) {
 					push @pieces, $delimiter;
 				} else {
 					$pieces[scalar(@pieces)-1] = $delimiter;
 				}
-			    $startNewPiece = 1;
-		    } elsif (scalar(@pieces) > 1 or $pieces[0]) {
-		  	    $startNewPiece = 1;
-		    }
-		    $line = $rest;
-		 } elsif (defined($quote)) {
-		    my ($restOfQuote,$remainder) = 
-		      ($rest =~ m/^((?:[^\\]|\\.)*?)$qhash{$quote}(.*)$/s);
-		    if (defined($restOfQuote)) {
-			    if ($keep) {
-				    $pieces[scalar(@pieces)-1] .= "$prefix$quote$restOfQuote${$quotehash}{$quote}";
-			    } else { #Not keeping, so remove backslash
-					     #from backslashed $quote occurrences
+				$startNewPiece = 1;
+			} elsif (scalar(@pieces) > 1 or $pieces[0]) {
+				$startNewPiece = 1;
+			}
+			$line = $rest;
+		} elsif (defined($quote)) {
+			my ($restOfQuote,$remainder) =
+			  ($rest =~ m/^((?:[^\\]|\\.)*?)$qhash{$quote}(.*)$/s);
+			if (defined($restOfQuote)) {
+				if ($keep) {
+					$pieces[scalar(@pieces)-1] .= "$prefix$quote$restOfQuote${$quotehash}{$quote}";
+				} else { #Not keeping, so remove backslash
+					 #from backslashed $quote occurrences
 					$restOfQuote =~ s/\\$quote/$quote/g;
-				    $pieces[scalar(@pieces)-1] .= "$prefix$restOfQuote";
-			    }
-			    $line = $remainder;
-			    $freshPiece = 0;
-		    } else { # can't find matching quote, give up
+					$pieces[scalar(@pieces)-1] .= "$prefix$restOfQuote";
+				}
+				$line = $remainder;
+				$freshPiece = 0;
+			} else { # can't find matching quote, give up
 				$uquote = 1;
 				last;
-		    }
+			}
 		 } elsif (defined($meta)) {
 			$pieces[scalar(@pieces)-1] .= $prefix;
-		    if (length($pieces[scalar(@pieces)-1]) or !$freshPiece) {
-			    push @pieces, $meta;
-		    } else {
-			    $pieces[scalar(@pieces)-1] = $meta;
-		    }
-		    $line = $rest;
-		    $startNewPiece = 1;
+			if (length($pieces[scalar(@pieces)-1]) or !$freshPiece) {
+				push @pieces, $meta;
+			} else {
+				$pieces[scalar(@pieces)-1] = $meta;
+			}
+			$line = $rest;
+			$startNewPiece = 1;
 		 } else { # nothing found, so remainder all one unquoted piece
 			if (!$keep and length($line)) {
 				$line =~ s/\\(.)/$1/g;
-		    }
-		    last;
+			}
+			last;
 		 }
 	 }
 	 if (length($line)) { $pieces[scalar(@pieces)-1] .= $line; }
@@ -3235,18 +3643,17 @@ sub unquote
 {
 	my $line = shift;
 	$line =~ s/^(['"])(.*)\1$/$2/;
-	if($1 eq '"')
-	{
+	if($1 eq '"') {
 		$line =~ s/\\n/\r\n/g;
 		$line =~ s/\\"/"/g;
 	}
 	return $line;
 }
 
-sub tokenize {
+sub tokenize
+{
 	my $line= shift;
-	my @parts= decompose('(\s+|/|\!|=)',
-							$line, undef, 1,undef , '["\']');
+	my @parts= decompose('(\s+|/|\!|=)', $line, undef, 1,undef , '["\']');
 
 	# Walk through parts and combine parenthesized parts properly
 	my $nestlevel=0;
@@ -3255,58 +3662,51 @@ sub tokenize {
 	my $previous_token='';
 	my $inquote = 0;
 	my $qc = '';
-	while( my $tmp= shift @parts) {
-		if(!$inquote)
-		{
-			if(($tmp eq '"') || ($tmp eq "'"))
-			{
+
+	while (my $tmp= shift @parts)
+	{
+		if(!$inquote) {
+			if(($tmp eq '"') || ($tmp eq "'")) {
 				push @tokens, $previous_token if($previous_token ne '');
 				# print ">> $previous_token\n";
 				$previous_token = $tmp;;
 				$qc = $tmp;
 				$inquote = 1;
-			} 
-			elsif($tmp =~ /^\s+$/)
-			{
+			} elsif($tmp =~ /^\s+$/) {
 				# do nothing
-			}
-			else
-			{
+			} else {
 				push @tokens, $previous_token if($previous_token ne '');
 				# print "++ $previous_token\n";
 				$previous_token = $tmp;
-				if($tmp eq '/')
-				{
+				if($tmp eq '/') {
 					push @tokens, $tmp;
 					push @tokens, (join '',@parts);
 					@parts = ();
 					$previous_token = '';
 				}
 			}
-		} else
-		{
-			if($tmp eq $qc)
-			{
+		} else {
+			if($tmp eq $qc) {
 				$previous_token .= $qc;
 				# print "-- $previous_token\n";
 				# push @tokens, $previous_token;
 				$inquote = 0;
-			} else
-			{
+			} else {
 				$previous_token .= $tmp;
 			}
 		}
 	}
+
 	push @tokens, $previous_token if($previous_token ne '');
-	if(@tokens)
-	{
+	if(@tokens) {
 		# if($tokens[0] eq '!')
 		# {
 			# $altargs = join ' ',@tokens[1..$#tokens];
-		# } 
-		my $first =  $tokens[0];
+		# }
+		my $first = $tokens[0];
 		($altargs = $line) =~ s/\s*\Q$first\E\s*//;
 	}
+
 	foreach (@tokens)
 	{	
 		$_ = unquote($_);
@@ -3321,8 +3721,7 @@ sub completion_func
 
 	foreach (@candidates)
 	{
-		if(s/^(\Q$text\E)/$text/i)
-		{
+		if(s/^(\Q$text\E)/$text/i) {
 			push @r,$_;
 		}
 	}
@@ -3332,46 +3731,43 @@ sub completion_func
 sub connect_server
 {
 	my $err;
-	return 0 if($icq->{_Connected});
-	print "Trying to connect.";
+
+	return 0 if($icq->{_Connected} || $connecting);
+	print "\nTrying to connect.";
+	$icq->{_Connecting} = 1;
 	$icq->{_Auto_Login} = 1;
 	$icq->Connect();
-	if(!($err = $icq->GetError()))
-	{
-		while(!$icq->{_LoggedIn} && !($err = $icq->GetError()))
+	if(!(@err = $icq->GetErrorCode())) {
+		while(!$icq->{_LoggedIn} && !(@err = $icq->GetErrorCode()))
 		{
 			$icq->Execute_Once();
 			# $icq->{_Connected} or &disconnect;
 		}
 	}
-	if(!$err)
-	{
+	if(!@err) {
+		$connecting = 0;
 		print "done!\n";
-		$SIG{ALRM} = \&tick_handler;
-		alarm 1;
 		return 0;
-	} else
-	{
+	} else {
 		print "..failed!\n";
-		Error($err);
+		$connecting = 0;
+		Error($err[1]);
+		# password mismatch
+		$config{autoconnect}=0 if($err[0] == 5);
 		return -1;
 	}
-
 }
 
 sub die_handler
 {
-	
-	# print  "FATAL: $_[0]\n";
-	$term->cleanup_after_signal if $gnu_readline;
+	# print "FATAL: $_[0]\n";
+	$term->cleanup_after_signal if ($gnu_readline && (defined $term));
 }
 
 sub warn_handler
 {
 	return;
 }
-
-
 
 sub Error
 {
@@ -3382,7 +3778,34 @@ sub Error
 
 sub ContactList
 {
-	print"zz";
+	my($Object, $details) = @_;
+	my @groups = keys %{$details->{Groups}};
+	my $gr;
+	my $output = '';
+
+	foreach $gr (@groups)
+	{
+		$output .= separator($details->{Groups}->{$gr}->{name});
+		my @uins = keys %{$details->{Groups}->{$gr}->{uins}};
+		foreach $uin (@uins)
+		{
+			my $nick = $details->{Groups}->{$gr}->{uins}->{$uin};
+			if($nick eq '') {
+				$nick = $uin;
+			}
+			$nick = decode($nick);
+			my $nick = sprintf("%20s",$nick);
+			my $nick = color_nick($nick);
+
+			my $uin = sprintf("%10s",$uin);
+			my $cuin = color_uin($uin);
+			$output .= "$nick ($uin)\n";
+		}
+	}
+	$output .= separator();
+	$output =~ s/\n$//;
+	output($output);
+	redisplay();
 }
 
 sub Add_Command_Handler
@@ -3403,22 +3826,21 @@ sub Invoke_Message_Handler
 	my $message = $details->{MessageType};
 	my $data = '';
 	return &{$_message_handlers{$message}}($details) if (exists $_message_handlers{$message});
-	if($opts{'D'})
-	{
+
+	if($opts{'D'}) {
 		foreach (keys %{$details})
 		{
 			$data .= "$_ = $details->{$_}\n";
 		}
 	}
-	$data .= "Unknown type: $details->{MessageType} Sender: $details->{Sender}\n";
+	$data .= "Unknown type: $details->{MessageType} Sender: $details->{Sender}\nPlease, report to gonzo\@ukrweb.net\n";
 	return $data;
 }
 
 sub register
 {
 	my $password = shift;
-	if($password eq '')
-	{
+	if($password eq '') {
 		return (0, "Empty passwords not allowed!");
 	}
 	my $ricq = Net::vICQ->new("none", $password ,"0");
@@ -3426,15 +3848,14 @@ sub register
 	$ricq->{_Proxy_Port} = $config{proxy_port};
 	$ricq->{_Proxy_Login} = $config{proxy_login};
 	$ricq->{_Proxy_Password} = $config{proxy_password};
-	if($config{https_proxy})
-	{
+
+	if($config{https_proxy}) {
 		$ricq->{_Proxy_Type} = 'https';
 		$ricq->{_Force_HTTPS_Port}=1 if($config{proxy_force_https_port});
-	}
-	elsif($config{socks_proxy})
-	{
+	} elsif($config{socks_proxy}) {
 		$ricq->{_Proxy_Type} = 'socks';
 	}
+
 	$ricq->Connect();
 	my $uin = $ricq->Register($password);
 	my $error = $ricq->{_ErrorStr};
@@ -3446,75 +3867,219 @@ sub register
 ##
 ###################################################
 
-sub cmd_msg 
+sub cmd_msg
 {
 	return $offline_error unless $icq->{_Connected};
 	my @args = @_;
 	my $uin = '';
 	my $msg = '';
+	my $status = '';
 	my ($details);
 	# if ($arg =~ /^([\*\~\s\w]+)(\/(.*))?$/){
 
-	$uin=GetUIN($args[0]);
-	return "No such nick" unless $uin;
+	my @uins = split /,/,$args[0];
+	# $uin=GetUIN($args[0]);
+	# return "No such nick" unless $uin;
 	if($args[1] eq '/')
 	{
-		if ($args[2] ne ''){
-		   $msg=$args[2];
+		if ($args[2] ne '') {
+			$msg=$args[2];
 		}
-	} 
-	if($msg eq '')
+	}
+
+	my @real_uins;
+	foreach (@uins)
 	{
-		   print "Composing message to ".color_nick($args[0]).":\n";
-		   $msg = read_message();
+		my $uin = GetUIN($_);
+		if ( $uin eq 0) {
+			my $n = color_nick($_);
+			print "No such nick: $n\n";
+			next;
+		}
+		push (@real_uins,$_);
+	}
+
+	if (! defined($real_uins[0]) ) { return; }
+
+	if($msg eq '') {
+		my $n="Composing message to ";
+		foreach (@real_uins)
+		{
+			$n=$n.color_nick($_).'+';
+		}
+		$n=~s/\+$/:\n/g;
+		print $n;
+		$msg = read_message();
 	}
 
 	if($msg eq '') { return "Message canceled"; }
 	$msg=~s/\\r\\n/\n/g;
 	$msg=~s/\\n/\r\n/g;
-	my $nick = GetContact($uin);
-	$nick = color_nick($nick);
-	my $status;
-	if ($config{autosplit} && length($msg)>450){
-		my $i = 0;
-		while(length($msg))
-		{
-			my $part = substr($msg,0,450);
-						substr($msg,0,450) = '';
-			send_text_message($uin,$part);
-			$i++;
-			my $l = length($part);
-			my $x = length($msg);
-			$status.="You sent part $i of instant message to $nick\n";
-		 }
-	}else{
-		 send_text_message($uin,substr($msg,0,450));
-		 $status="You sent instant message to $nick";
+	foreach (@real_uins)
+	{
+		my $uin = GetUIN($_);
+		my $nick = GetContact($uin);
+		$nick = color_nick($nick);
+		if ($config{autosplit} && length($msg)>450) {
+			my $i = 0;
+			while(length($msg))
+			{
+				my $partlen = 450;
+				my $lastlen = 0;
+
+				# Cut off the first part of the message
+				my $part = substr($msg,0,$partlen);
+
+				# Try to truncate on word boundaries
+				if ( length($part) == $partlen ) {
+					$part =~ s/(.*?)(\w*)$/$1/;
+					$lastlen = length($2);
+
+					if ( $lastlen == $partlen ) {
+						# Oops, No whitespace in the message!
+						$part = $1;
+						$lastlen = 0;
+					}
+				}
+
+				# Cut the sent part off of the message
+				substr($msg,0,$partlen - $lastlen) = '';
+
+				send_text_message($uin,$part);
+				$i++;
+				my $l = length($part);
+				my $x = length($msg);
+				$status.="message part $i sent to $nick\n";
+		 	}
+		} else {
+		 	send_text_message($uin,substr($msg,0,450));
+		 	$status .= "message sent to $nick\n";
+		}
+		add_to_uin_history($uin);
 	}
-	add_to_uin_history($uin);
 	chomp($status);
 	return $status;
 }
 
-sub cmd_search 
+sub cmd_search
 {
-
 	return $offline_error unless $icq->{_Connected};
 	return search_by_email(@_);
 }
 
-sub cmd_info 
+sub cmd_wpsearch
 {
 	return $offline_error unless $icq->{_Connected};
-	get_wp_info(@_);
-	return '';
+	return search_by(@_);
+}
+
+
+sub cmd_info
+{
+	return $offline_error unless $icq->{_Connected};
+	return get_wp_info(@_);
+}
+
+sub cmd_passwd
+{
+	my ($pass) = shift;
+	my $details;
+	if($pass eq '') {
+		my $pass1 = 1;
+		my $pass2 = 2;
+		while($pass1 ne $pass2)
+		{
+			$pass1 = getpass("New password:");
+			print "\n";
+			$pass2 = getpass("Confirm new password:");
+			print "\n";
+			if($pass1 ne $pass2) {
+				print "Mismatch; try again.\n";
+			} else {
+				$pass = $pass1;
+				if($pass eq '') {
+					$pass1 = 1;
+					$pass2 = 2;
+					print "Empty password not permitted\n";
+				}
+			}
+		}
+	}
+	$details->{MessageType} = "Change_Password";
+	$details->{Password} = $pass;
+	$icq->Send_Command("Cmd_Srv_Message",$details);
+	return "Password change request has been sent";
+}
+
+
+sub cmd_rand
+{
+	my ($group) = shift;
+	my $details;
+	my %groups = (1 => "General",
+			2 => "Romance",
+			3 => "Games",
+			4 => "Students",
+			6 => "20 something",
+			7 => "30 something",
+			8 => "40 something",
+			9 => "50+",
+			10 => "Man chat requesting women",
+			11 => "Woman chat requesting men");
+
+	if(! defined $group) {
+		return "You should specify group.
+Groups:
+General                    1
+Romance                    2
+Games                      3
+Students                   4
+20 something               6
+30 something               7
+40 something               8
+50+                        9
+Man chat requesting women 10
+Woman chat requesting men 11"
+	}
+
+	if(!exists $groups{$group}) { return "Unknown group number: $group"; }
+	$details->{MessageType} = "Random_Search";
+	$details->{TargetGroup} = $group;
+	$icq->Send_Command("Cmd_Srv_Message",$details);
+	return "Random UIN request (group \"$groups{$group}\") have been sent";
+}
+
+sub cmd_group
+{
+	my ($group) = shift;
+	my $details;
+	if(! defined $group) {
+		return "You should specify group.
+Groups:
+General                    1
+Romance                    2
+Games                      3
+Students                   4
+20 something               6
+30 something               7
+40 something               8
+50+                        9
+Man chat requesting women 10
+Woman chat requesting men 11"
+	}
+
+	if(!exists $groups{$group}) { return "Unknown group number: $group"; }
+	$details->{MessageType} = "Set_Group";
+	$details->{TargetGroup} = $group;
+	$icq->Send_Command("Cmd_Srv_Message",$details);
+	return "Group has been set to \"$groups{$group}\"";
 }
 
 sub cmd_wpset
 {
 	return $offline_error unless $icq->{_Connected};
 	set_my_info();
-	return ''; 
+	return '';
 }
 
 sub cmd_history
@@ -3522,13 +4087,11 @@ sub cmd_history
 	my @args = @_;
 	my $uin = GetUIN($args[0]);
 	my $count = $args[1];
-	if(!$uin && $config{log_type}=~/u/)
-	{
-		return 'No such nick';
+	if(!$uin && $config{log_type}=~/u/) {
+		return "No such nick";
 	}
-	if(($count !~ /^\d+$/) && $count)
-	{
-		return 'Invalid messages count';
+	if(($count !~ /^\d+$/) && $count) {
+		return "Invalid messages count";
 	}
 	if(!$count) { $count = $config{history_entries}; }
 	$count = 20 unless $count;
@@ -3544,30 +4107,30 @@ sub cmd_url
 	my $msg = '';
 	my ($details);
 		$uin = GetUIN($args[0]);
-	if(!$uin) { return "No such nick"; }
+	if(!$uin) {
+		return "No such nick";
+	}
+
 	my $nick = GetContact($uin);
 	$nick = color_nick($nick);
-	print "Composing URL message to $nick:\n";
+	print "Composing URL to $nick:\n";
 	my $url = '';
 	$url = join '',@args[1..$#args] if $#args>0;
 	$url = read_url() unless $url;
-	if(!$url)
-	{
-		return "URL message canceled";
+	if(!$url) {
+		return "URL canceled";
 	}
 	my $desc = read_description();
-	if($desc eq '#')
-	{
-		return "URL message canceled";
+	if($desc eq '#') {
+		return "URL canceled";
 	}
 	send_url_message($uin,$url,$desc);
-	return "You sent URL message to $nick";
+	return "sent URL to $nick";
 }
 
 sub cmd_view
 {
-	if($last_message_url ne '')
-	{
+	if($last_message_url ne '') {
 		my $cmd = $config{browser};
 		my $urlparam = $last_message_url;
 		$urlparam =~ s/'/'\''/g;
@@ -3575,19 +4138,25 @@ sub cmd_view
 		system $cmd;
 		return '';
 	}
-	return 'No URL for this moment';
+	return "No URL at the moment"; # not sure
+}
+
+
+sub cmd_status
+{
+        return $config{status};
 }
 
 sub cmd_silent
-{ 
+{
 	$config{mode} = 'silent';
-	return 'Status change messages disabed';
+	return "Status change messages disabled";
 }
 
 sub cmd_normal
-{ 
-	$config{mode} = 'normal'; 
-	return 'Status change messages enabled';
+{
+	$config{mode} = 'normal';
+	return "Status change messages enabled";
 }
 
 sub cmd_sms
@@ -3597,15 +4166,13 @@ sub cmd_sms
 	my $target = '';
 	my $msg = '';
 	my ($details);
-	if($args[1] eq '/')
-	{
+	if($args[1] eq '/') {
 		if($args[2])
 		{
 			$msg = $args[2];
 			$target = $args[0];
 		}
-	} else
-	{
+	} else {
 				$target = $args[0];
 	}
 	if ($target !~ /^[-()+0-9]+$/) {
@@ -3617,6 +4184,7 @@ sub cmd_sms
 			return "Can't find ${target}'s phone number in your phonebook";
 		}
 	}
+
 	if(!$target) { return "invalid number"; }
 	unless ($msg) {
 		print "Composing message to $args[0]:\n";
@@ -3626,31 +4194,39 @@ sub cmd_sms
 	$target =~ s/[-()]//g;
 	$last_message_to = $target;
 	if($msg eq '') { return "SMS canceled"; }
-	my %details = ( SMS_Dest_Number  => $target,
-					MessageType => 'SMS',
-					text => translit($msg),
-					delivery_receipt=>'Yes'								
-	);
+	my %details = ( SMS_Dest_Number =>	$target,
+			MessageType =>		'SMS',
+			text =>			translit($msg),
+			delivery_receipt =>	'Yes'
+			);
 	$icq->Send_Command("Cmd_Srv_Message", \%details);
-	log_outgoing_event("sms.$target","Send SMS to $target\n$msg\n");
-	return "You sent SMS message to $target\n";
+	log_outgoing_event("sms.$target","SMS has been sent to $target\n$msg\n");
+	return "You have sent SMS message to $target\n";
 }
 
 sub cmd_a
-{ 
+{
 	return $offline_error unless $icq->{_Connected};
-	return do_reply ( $last_message_to, @_); 
+	return do_reply ( $last_message_to, @_);
 }
 
 sub cmd_r
-{ 
+{
 	return $offline_error unless $icq->{_Connected};
-	return do_reply ( $last_message_from, @_); 
+	return do_reply ( $last_message_from, @_);
 }
 
-sub cmd_get
+sub cmd_roster
+{
+	my ($details);
+	# $details->{Command} = 'General';
+	# $icq->Send_Command("Cmd_Update_Group", $details) if $icq->{_Connected};
+	# $icq->Send_Command("Cmd_Add_List", $details) if $icq->{_Connected};
+}
+sub cmd_getcontacts
 {
 	$icq->Send_Command("Cmd_Get_List");
+	return "Contacts request has been sent";
 }
 
 sub cmd_add
@@ -3658,17 +4234,35 @@ sub cmd_add
 	my @args = @_;
 	my $uin = $args[0];
 	my $contact = $args[1];
+
 	$contacts{$uin}{name} = $contact;
 	$prefs{$uin}{status} = 'Offline';
-	$prefs{$uin}{ip} = 'x.x.x.x';
+	$prefs{$uin}{ip} = 'un.kn.ow.n_'; # :)
 	$prefs{$uin}{connection_type} = 0;
 	add_to_contact_list($uin,$contact);
+	
 	my ($details);
 	my @uins = ($uin);
 	$details->{ContactList} = \@uins;
 	$icq->Send_Command("Cmd_Add_ContactList", $details) if $icq->{_Connected};
-	# parse_command('submit')  if $icq->{_Connected};
-	return "You added $uin($contact) to ContactList";
+	# parse_command('submit') if $icq->{_Connected};
+	return "You have added $uin($contact) to ContactList";
+}
+
+sub cmd_del
+{
+	my $nick=shift;
+	my $uin=GetUIN($nick);
+	if (exists($contacts{$uin})) {
+		$deleted_contacts{$uin}{nick} = $contacts{$uin}{nick};
+		$deleted_contacts{$uin}{file} = $contacts_info{$uin}{file};
+		$deleted_contacts{$uin}{line} = $contacts_info{$uin}{line};
+		delete $contacts{$uin};
+		delete $prefs{$uin};
+		return "User ".color_nick($nick)." has been deleted from ContactList";
+	} else {
+		return "Can't find user ".color_nick($nick);
+	}
 }
 
 sub cmd_submit
@@ -3690,13 +4284,12 @@ sub cmd_togvis
 	my @args=@_;
 	my $uin = GetUIN($args[0]);
 	my @uins = ($uin);
-	if($prefs{$uin}{visible} eq 'yes')
-	{
+
+	if($prefs{$uin}{visible} eq 'yes') {
 		remove_from_visible_list(\@uins) if $icq->{_Connected};
 		# add_to_generic_list(\@uins);
 		$prefs{$uin}{visible} = 'no';
-	} else
-	{
+	} else {
 		$prefs{$uin}{visible} = 'yes';
 		$prefs{$uin}{invisible} = 'no';
 		add_to_visible_list(\@uins) if $icq->{_Connected};
@@ -3709,24 +4302,19 @@ sub cmd_permissions
 	return $offline_error unless $icq->{_Connected};
 	my @args = @_;
 	my ($details);
+
 	foreach my $sw (@args)
 	{
 		$sw = lc $sw;
-		if($sw =~ /([\-\+])(\w+)/)
-		{
-			if($2 eq 'auth')
-			{
-				$details->{_auth} = $1 eq '+' ?  1 : 0;
-			}
-			elsif($2 eq 'web')
-			{
+		if($sw =~ /([\-\+])(\w+)/) {
+			if($2 eq 'auth') {
+				$details->{_auth} = $1 eq '+' ? 1 : 0;
+			} elsif($2 eq 'web') {
 				$details->{_web} = $1 eq '+' ? 1 : 0;
-			} else
-			{
+			} else {
 				return "Unknown switch: $2";
 			}
-		} else
-		{
+		} else {
 			return "$sw - not in switch format";
 		}
 	}
@@ -3738,6 +4326,7 @@ sub cmd_permissions
 sub cmd_clear
 {
 	print "\033c";
+	print $termcap->Tputs('cl',0) if defined $termcap;
 	return '';
 }
 
@@ -3746,12 +4335,11 @@ sub cmd_toginvis
 	my @args=@_;
 	my $uin = GetUIN($args[0]);
 	my @uins = ($uin);
-	if($prefs{$uin}{invisible} eq 'yes')
-	{
+
+	if($prefs{$uin}{invisible} eq 'yes') {
 		remove_from_invisible_list(\@uins) if $icq->{_Connected};
 		$prefs{$uin}{invisible} = 'no';
-	} else
-	{
+	} else {
 		$prefs{$uin}{invisible} = 'yes';
 		$prefs{$uin}{visible} = 'no';
 		add_to_invisible_list(\@uins) if $icq->{_Connected};
@@ -3761,12 +4349,14 @@ sub cmd_toginvis
 
 sub cmd_inv
 {
+	$invisible = 1;
 	set_status("Invisible");
 	return $config{status};
 }
 
 sub cmd_online
 {
+	$invisible = 0;
 	set_status("Online");
 	return $config{status};
 }
@@ -3774,30 +4364,36 @@ sub cmd_online
 sub cmd_na
 {
 	set_status("Not_Available");
+	$icq->{_NA_Message} = encode($altargs) if $altargs ne '';
 	return $config{status};
 }
 
 sub cmd_dnd
 {
 	set_status("Do_Not_Disturb");
+	$icq->{_DND_Message} = encode($altargs) if $altargs ne '';
 	return $config{status};
 }
 
 sub cmd_away
 {
+	my @args = @_;
 	set_status("Away");
+	$icq->{_Away_Message} = encode($altargs) if $altargs ne '';
 	return $config{status};
 }
 
 sub cmd_occ
 {
 	set_status("Occupied");
+	$icq->{_Occupied_Message} = encode($altargs) if $altargs ne '';
 	return $config{status};
 }
 
 sub cmd_ffc
 {
 	set_status("Free_For_Chat");
+	$icq->{_FFC_Message} = encode($altargs) if $altargs ne '';
 	return $config{status};
 }
 
@@ -3805,38 +4401,42 @@ sub cmd_auth
 {
 	return $offline_error unless $icq->{_Connected};
 	my ($details);
- 		$details->{uin} = GetUIN($_[0]);
+	$details->{uin} = GetUIN($_[0]);
+	my $auth = 0x01;
+	if(lc($_[1]) eq 'decline') {
+		$auth = 0x00;
+	}
+	$details->{Auth} = $auth;
 	$last_message_to = $details->{uin};
- 		$icq->Send_Command("Cmd_Authorize", $details);
-	return "Authorization sent to $details->{uin}";
+	$icq->Send_Command("Cmd_Authorize", $details);
+	return "Authorization has been sent to $details->{uin}";
 }
 
-sub cmd_finger 
-{ 
+sub cmd_finger
+{
 	my $uin=GetUIN($_[0]);
-	if (! exists $prefs{$uin}) 
-	{
+	if (! exists $prefs{$uin}) {
 		return color_nick($_[0]). " is not on your contact list\n";
 	}
-	my $hostname = gethostbyaddr pack("C4", split '\.', $prefs{$uin}{ip}), 2;
+
+	my $hostname = gethostbyaddr pack("C4",split '\.', $prefs{$uin}{ip}), 2;
 	my $connection_type = $prefs{$uin}{connection_type};
-	if($connection_type)
-	{
+	if($connection_type) {
 		$connection_type =color_status($connection_types{$connection_type});
 	}
 	return color_nick($_[0]). "(".color_nick($uin).") ".
-		color_status($prefs{$uin}{status}) . 
+		color_status($prefs{$uin}{status}) .
 		"\nIP address  : ".
 		color_status($prefs{$uin}{ip}).
-		"\nHost        : " . 
-		color_status($hostname) . 
-		"\nDC info     : " . 
-		color_status($prefs{$uin}{dc_ip}) .  ':' . 
-		color_status($prefs{$uin}{dc_port}) . 
+		"\nHost        : " .
+		color_status($hostname) .
+		"\nDC info     : " .
+		color_status($prefs{$uin}{dc_ip}) .  ':' .
+		color_status($prefs{$uin}{dc_port}) .
 		"\nConn. type  : $connection_type" .
-		"\nICQ version : " . 
+		"\nICQ version : " .
 		color_status(GetVersion($prefs{$uin}{icq_version}));
-} 
+}
 
 sub cmd_w
 {
@@ -3848,14 +4448,14 @@ sub cmd_w
 		if($status ne 'Offline') { next; }
 		$status = color_status($status);
 		my $uin = GetContact($_);
-		if($prefs{$_}{visible} eq 'yes')
-		{
+		if($prefs{$_}{visible} eq 'yes') {
 			$uin = "*$uin";
 		}
 		$uin = sprintf "%20s",$uin;
-		$uin = color_nick($uin);
+		$uin = color_uin($uin);
 		print "$uin [$ip] ($status)\n";
 	}
+
 	print separator('Online users');
 	foreach ( sort { uc(GetContact($a)) cmp uc(GetContact($b)) } keys %contacts)
 	{
@@ -3864,17 +4464,15 @@ sub cmd_w
 		if($status eq 'Offline') { next; }
 		$status = color_status($status);
 		my $uin = GetContact($_);
-		if($prefs{$_}{visible} eq 'yes')
-		{
+		if($prefs{$_}{visible} eq 'yes') {
 			$uin = "*$uin";
 		}
-		elsif($prefs{$_}{invisible} eq 'yes')
-		{
+		elsif($prefs{$_}{invisible} eq 'yes') {
 			$uin = "~$uin";
 		}
 
 		$uin = sprintf "%20s",$uin;
-		$uin = color_nick($uin);
+		$uin = color_uin($uin);
 		print "$uin [$ip] ($status)\n";
 	}
 	print separator();
@@ -3890,21 +4488,138 @@ sub cmd_e
 		if($status eq 'Offline') { next; }
 		$status = color_status($status);
 		my $uin = GetContact($_);
-		if($prefs{$_}{visible} eq 'yes')
-		{
+
+		if($prefs{$_}{visible} eq 'yes') {
 			$uin = "*$uin";
-		}
-		elsif($prefs{$_}{invisible} eq 'yes')
-		{
+		} elsif($prefs{$_}{invisible} eq 'yes') {
 			$uin = "~$uin";
 		}
 		$uin = sprintf "%20s",$uin;
-		$uin = color_nick($uin);
+		$uin = color_uin($uin);
 		print "$uin [$ip] ($status)\n";
 	}
 	print separator();
 	return '';
 }
+
+sub cmd_wg
+{
+	my @grp=@_;
+	my @groups = ();
+	foreach(keys %contacts)
+	{
+		my $group = GetGroup($_);
+		if(!in_array($group, \@groups))
+		{
+			push @groups, $group;
+		}
+	}
+	foreach $group (@groups)
+	{
+		my $flag=1;
+		foreach my $g (@grp){
+			if ($g=~/^($group)?$/i){
+				$flag=1;
+				last;
+			}else{
+				$flag=0;
+			}			
+		}
+		next unless $flag;
+		print separator($group);
+		foreach ( sort { uc(GetGroup($a)) cmp uc(GetGroup($b)) } keys %contacts)
+		{
+			my $ip = sprintf "%15s",$prefs{$_}{ip};
+			my $status = $prefs{$_}{status};
+			my $uin_group =  GetGroup($_);
+			if($uin_group ne $group) { next; }
+			if($status ne 'Offline') { next; }
+			
+			$status = color_status($status);
+			my $uin = GetContact($_);
+			if($prefs{$_}{visible} eq 'yes') {
+				$uin = "*$uin";
+			}
+			$uin = sprintf "%20s",$uin;
+			$uin = color_uin($uin);
+			print "$uin [$ip] ($status)\n";
+		}
+	
+		foreach ( sort { uc(GetContact($a)) cmp uc(GetContact($b)) } keys %contacts)
+		{
+			my $ip = sprintf "%15s",$prefs{$_}{ip};
+			my $uin_group = GetGroup($_);
+			my $status = $prefs{$_}{status};
+			if($status eq 'Offline') { next; }
+			if($group ne $uin_group) { next; }
+			$status = color_status($status);
+			my $uin = GetContact($_);
+			if($prefs{$_}{visible} eq 'yes') {
+				$uin = "*$uin";
+			}
+			elsif($prefs{$_}{invisible} eq 'yes') {
+				$uin = "~$uin";
+			}
+			$uin = sprintf "%20s",$uin;
+			$uin = color_uin($uin);
+			print "$uin [$ip] ($status)\n";
+		}
+	}
+	print separator();
+	return '';
+}
+
+sub cmd_eg
+{
+	my @grp=@_;
+	my @groups = ();
+	foreach(keys %contacts)
+	{
+		my $group = GetGroup($_);
+		if(!in_array($group, \@groups))
+		{
+			push @groups, $group;
+		}
+	}
+	foreach $group (@groups)
+	{
+		my $flag=1;
+		foreach my $g (@grp){
+			if ($g=~/^($group)?$/i){
+				$flag=1;
+				last;
+			}else{
+				$flag=0;
+			}
+		}
+		next unless $flag;
+		print separator($group);
+		foreach ( sort { uc(GetContact($a)) cmp uc(GetContact($b)) } keys %contacts)
+		{
+			my $ip = sprintf "%15s",$prefs{$_}{ip};
+			my $uin_group = GetGroup($_);
+			my $status = $prefs{$_}{status};
+			if($status eq 'Offline') { next; }
+			if($group ne $uin_group) { next; }
+			$status = color_status($status);
+			my $uin = GetContact($_);
+			if($prefs{$_}{visible} eq 'yes') {
+				$uin = "*$uin";
+			}
+			elsif($prefs{$_}{invisible} eq 'yes') {
+				$uin = "~$uin";
+			}
+			$uin = sprintf "%20s",$uin;
+			$uin = color_uin($uin);
+
+			print "$uin [$ip] ($status)\n";
+		}
+	}
+	print separator();
+	return '';
+}
+
+
 
 sub cmd_bd
 {
@@ -3934,7 +4649,7 @@ sub cmd_save
 {
 	my $output = '';
 	$output .= &save_config;
-	$output .=  "Reloading config...";
+	$output .= "Reloading config...";
 	$output .= &parse_config;
 	$output .= "done";
 	return $output;
@@ -3945,23 +4660,17 @@ sub cmd_set
 	my $str=join ('',@_);
 	$str=~s/^\s+//;
 	$str=~s/\s+$//;
-	if ($str eq ''){
-		foreach (sort keys %config) 
-		{ 
-			print "$_ = $config{$_}\n"; 
+	if ($str eq '') {
+		foreach (sort keys %config)
+		{
+			print "$_ = $config{$_}\n";
 		}
-	}
-	elsif($str =~ /(\w+)\s*=\s*(.*)/)
-	{
+	} elsif($str =~ /(\w+)\s*=\s*(.*)/) {
 		$config{$1}=$2;
 		print "$1 is set to $2\n";
-	}
-	elsif (exists $config{$str})
-	{
+	} elsif (exists $config{$str}) {
 		print "$str=$config{$str}\n";
-	}
-	else
-	{
+	} else {
 		print "can't find key '$str'\n";
 	}
 	return "";
@@ -3972,17 +4681,12 @@ sub cmd_alias
 	my $str=join ('',@_);
 	$str=~s/^\s+//;
 	$str=~s/\s+$//;
-	if ($str eq '')
-	{
+	if ($str eq '') {
 		foreach (sort keys %aliases) { print "$_ = $aliases{$_}\n"; }
-	}
-	elsif ($str =~ /([^ \t=]+)\s*=\s*([^ \t=]+)?/)
-	{
+	} elsif ($str =~ /([^ \t=]+)\s*=\s*([^ \t=]+)?/) {
 		my ($new,$old)=($1,$2);
-		if ($old eq '')
-		{
-			if (exists $aliases{$new})
-			{
+		if ($old eq '') {
+			if (exists $aliases{$new}) {
 				$deleted_aliases{$new}{cmd} = $aliases{$new};
 				$deleted_aliases{$new}{file} = $aliases_info{$new}{file};
 				$deleted_aliases{$new}{line} = $aliases_info{$new}{line};
@@ -3990,17 +4694,12 @@ sub cmd_alias
 				delete $_command_handlers{$new};
 				delete $aliases{$new};
 				delete $aliases_info{$new};
-				print "alias for '$new' removed\n";
+				print "Alias for '$new' has been removed\n";
+			} else {
+				print "Can't find alias '$str'\n";
 			}
-			else
-			{
-				print "can't find alias '$str'\n";
-			}
-		}
-		else
-		{
-			if (! exists $_command_handlers{$old})
-			{
+		} else {
+			if (! exists $_command_handlers{$old}) {
 				print "Cannot alias nonexistent command $old\n";
 				return "";
 			}
@@ -4010,14 +4709,10 @@ sub cmd_alias
 			$aliases_info{$new}{file} = '' unless exists $aliases_info{$new}{file};
 			print "'$new' now is alias for '$old'\n";
 		}
-	}
-	elsif (exists $aliases{$str})
-	{
+	} elsif (exists $aliases{$str}) {
 		print "$str=$aliases{$str}\n";
-	}
-	else
-	{
-		print "can't find alias '$str'\n";
+	} else {
+		print "Can't find alias '$str'\n";
 	}
 	return "";
 }
@@ -4029,25 +4724,31 @@ sub cmd_last
 	my $unick = GetContact($uin);
 	unless ($nick)
 	{
-		print "format: last UIN | nickname\n";
-	}
-	elsif (exists $last{$unick})
-	{
-		print separator()."Last ".$last{$unick}.separator();
-	}
-	else
-	{
-		print separator()."no messages from ".color_nick($nick).
-			"\n".separator();
+		# print "format: last UIN | nickname\n";
+		my $result = separator("Last 10");
+		if(@last_uins) {
+			foreach (@last_uins)
+			{
+				$result .= color_nick($_) . "\n";
+			}
+		} else {
+			$result .= "No incoming messages\n";
+		}
+		$result .= separator();
+		return $result;
+	} elsif (exists $last{$unick}) {
+		return separator()."Last ".$last{$unick}.separator();
+	} else {
+		return separator()."No messages from ".color_nick($nick)."\n".separator();
 	}
 	return "";
 }
 
 sub cmd_echo
 {
-	my $output = separator() 
-		.  $altargs 
-		. "\n" 
+	my $output = separator()
+		. $altargs
+		. "\n"
 		. separator();
 	output($output);
 	return '';
@@ -4058,7 +4759,7 @@ sub cmd_offline
 	foreach(keys %contacts)
 	{
 		$prefs{$_}{status} = 'Offline';
-		$prefs{$_}{IP} = 'x.x.x.x';
+		$prefs{$_}{IP} = 'un.kn.ow.n_';
 	}
 	$icq->Disconnect;
 	return '';
@@ -4075,90 +4776,57 @@ sub cmd_event
 		my $i=0;
 		foreach my $hook (@ExternalHooks)
 		{
-			$output.=sprintf("%2d|%1s|%18s|%8s|%6s|%s",++$i, ($hook->{active})?'*':' ', 
+			$output.=sprintf("%2d|%1s|%18s|%8s|%6s|%s",++$i, ($hook->{active})?'*':' ',
 				#($hook->{stop})?'*':' ',
 				substr($hook->{eventspec},0,17),
 				substr($hook->{orig_nick},0,7),
-				short_status($hook->{status}) ? substr(short_status($hook->{orig_status}),0,5) : substr($hook->{orig_status},0,5),
+				is_short_status($hook->{status}) ? substr(short_status($hook->{orig_status}),0,5) : substr($hook->{orig_status},0,5),
 				'"'.join('","',@{$hook->{command}}).'"'."\n"
 				);
 		}
 		$output.=separator();
 		output($output);
-	}
-	else
-	{
-		if ($altargs =~ /(\w+)\s+(.+)/){
+	} else {
+		if ($altargs =~ /(\w+)\s+(.+)/) {
 			my ($cmd, $arg)=($1,$2);
-			if ($cmd eq 'on' && $arg =~ /^\d+$/)
-			{
+			if ($cmd eq 'on' && $arg =~ /^\d+$/) {
 				$ExternalHooks[$arg-1]->{active}=1;
-	 		}
-			elsif($cmd eq 'off' && $arg =~ /^\d+$/)
-			{
+			} elsif($cmd eq 'off' && $arg =~ /^\d+$/) {
 				$ExternalHooks[$arg-1]->{active}=0;
-			} 
-			elsif($cmd eq 'del' && $arg =~ /^\d+$/)
-			{
+			} elsif($cmd eq 'del' && $arg =~ /^\d+$/) {
 				push @DeletedHooks,$ExternalHooks[$arg-1];
 				splice @ExternalHooks, $arg-1,1;
-			}
-			elsif($cmd eq 'add'){
+			} elsif($cmd eq 'add') {
 				my $hook=parse_event_definition($arg);
-				if (defined $hook)
-				{
+				if (defined $hook) {
 					push @ExternalHooks, $hook;
-		 		}
-				else
-				{
+				} else {
 					print "Error in event definition. See README.\n";
 				}
-	 		}
-			else
-			{
+			} else {
 				print "Unknown event command format. See 'help event'\n";
 			}
-		}
-		else
-		{
+		} else {
 			print "Unknown event command format. See 'help event'\n";
 		}
 	}
 	return '';
 }
 
-sub cmd_debug
-{
-  $icq->{_Debug} = 1;
-}
-
-sub cmd_undebug
-{
-  $icq->{_Debug} = 0;
-}
-
-
-
-sub cmd_version 
+sub cmd_version
 {
 	my $data = '';
-	if($Id =~ / (\d+\.\d+) /)
-	{
+	if($Id =~ / (\d+\.\d+) /) {
 		my $rev = $1;
-		my $version = '0.4.1';
-		if($config{colors})
-		{
-			$version = $colors{YELLOW} . $version . $colors{NORMAL};
-			$rev = $colors{YELLOW} . $rev . $colors{NORMAL};
-		}
-		$data .= "vICQ version: [$version] revision:[$rev]\n";
+		my $version = 'devel';
+		$data .= "vICQ version: [".&color_version($version)."] revision:[".&color_version($rev)."]\n";
 	}
-	my $mv = $config{colors} ? $colors{YELLOW} . $module_version . $colors{NORMAL} : $module_version;
-	$data .= "vICQ.pm version: [$mv]";
+	my $mv = &color_version($Net::vICQ::VERSION);
+	my $mr = &color_version($Net::vICQ::REVISION);
+	$data .= "vICQ.pm version: [$mv] revision [$mr]";
 	return $data;
 
 }
-
 
 sub cmd_read
 {
@@ -4182,8 +4850,43 @@ sub cmd_register
 	return "Brand new UIN: $uin";
 }
 
+sub cmd_toggle
+{
+	my $var = shift;
+	if($var eq '') {
+		 return "Please, specify config variable";
+	}
+
+	$config{$var}=0 unless exists $config{$var};
+	my $state = 'ON';
+	if($config{$var}) {
+		$config{$var} = 0;
+		$state = 'OFF';
+	} else {
+		$config{$var} = 1;
+	}
+	return "'$var' is now $state";
+}
+
+
+sub cmd_seen
+{
+	my $contact = shift;
+	my $uin = GetUIN($contact);
+	$contact = color_uin($contact);
+	if($uin)
+	{
+		my $seen = color_time($prefs{$uin}->{lastseen});
+		if($prefs{$uin}->{status} ne 'Offline') {
+			return "$contact is on air";
+		}
+		return "$contact goes offline: $seen";
+	}
+	return "Unknown contact: $contact";
+}
+
 #######################################################################
-## Incomming messages handlers
+## Incoming messages handlers
 ##
 #######################################################################
 
@@ -4195,13 +4898,15 @@ sub offline_text_message_handler
 	add_to_uin_history($last_message_from);
 	my $text = decode($details->{text});
 	$text = color_message($text);
-	my $data = "Instant offline message from $name:\n$text\n";
+	my $data = "offline message from $name:\n$text\n";
 	$last{GetContact($details->{Sender})}= $data;
+	push @last_uins, GetContact($details->{Sender}) unless in_array(GetContact($details->{Sender}),\@last_uins);
+	if(@last_uins > 10) {
+		shift @last_uins
+	}
 	log_incoming_event($last_message_from, $data);
-	return  $data;
-	
+	return $data;
 }
-
 
 sub text_message_handler
 {
@@ -4210,8 +4915,12 @@ sub text_message_handler
 	$last_message_from = $details->{Sender};
 	add_to_uin_history($last_message_from);
 	my $text = color_message(decode($details->{text}));
-	my $data = "Instant message from $name:\n$text\n";
+	my $data = "message from $name:\n$text\n";
 	$last{GetContact($details->{Sender})} = $data;
+	push @last_uins, GetContact($details->{Sender}) unless in_array(GetContact($details->{Sender}),\@last_uins);
+	if(@last_uins > 10) {
+		shift @last_uins
+	}
 	log_incoming_event($details->{Sender},$data);
 	return $data;
 }
@@ -4219,6 +4928,30 @@ sub text_message_handler
 sub email_message_handler
 {
 	my $details = shift;
+	my $valid=1;
+	my @spam_regexp=map {s/^\s+//;s/\s+$//; $_} split /,/, $config{spam_regexp};
+	foreach my $mask(@spam_regexp){
+		if (substr($mask,0,1) eq '!'){
+			$valid=0;
+			substr($mask,0,1)='';
+			#print "1. mask='$mask'\nemail=".$details->{Email}."\n";
+			if ($details->{Email} =~ /^$mask$/){
+				#print "MATCH1!\n";
+				$valid=1;
+				last;
+			}
+		} else {
+			#print "2. mask='$mask'\nemail=".$details->{Email}."\n";
+			last if $valid==0;
+			if ($details->{Email} =~ /^$mask$/){
+				#print "MATCH2!\n";
+				$valid=0;
+				last;
+			}
+		}
+	}
+	#print "VALID=$valid\n";
+	return "" unless $valid;
 	my $name = color_nick($details->{Name});
 	my $email = color_nick($details->{Email});
 	my $message = color_message($details->{Text});
@@ -4240,6 +4973,73 @@ sub contacts_request_handler
 	return $data;
 }
 
+sub file_handler
+{
+	my $details = shift;
+	my $name = color_nick(GetContact($details->{Sender}));
+	my $connection = $details->{Connection};
+	$connection->{FileName} = decode($connection->{FileName});
+	my $fname = $connection->{FileName};
+	return "Getting $fname from $name\n";
+}
+
+
+sub files_handler
+{
+	my $details = shift;
+	my $name = color_nick(GetContact($details->{Sender}));
+	my $connection = $details->{Connection};
+	$last_message_from = $details->{Sender};
+	$last_message_url = $details->{URL};
+	add_to_uin_history($last_message_from);
+	$details->{Files} = color_message(decode($details->{Files}));
+	$details->{Size} = color_message(decode($details->{Size}));
+	$details->{Description} = color_message(decode($details->{Description}));
+	my $data = "Files offer from $name\nFiles: $details->{Files}\nTotal size: $details->{Size}\nDescription:\n$details->{Description}\n";	
+	output($data);
+	$last{GetContact($details->{Sender})}=$data;
+	push @last_uins, GetContact($details->{Sender}) unless in_array(GetContact($details->{Sender}),\@last_uins);
+	if(@last_uins > 10) {
+		shift @last_uins
+	}
+	my $a = 'q';
+	while($a !~ /^[yn]$/i)
+	{
+		print "Accept(Y/N)?";
+		$a = getc();
+		chomp $a;
+	}
+	if($a =~ /n/i) {
+		print("\nRejecting files\n");
+		$icq->RejectFile($connection);
+	} else {
+		print "\n";
+		$icq->AcceptFile($connection);
+	}
+	redisplay();
+	log_incoming_event($last_message_from, $data);
+	return '';
+}
+
+sub chat_handler
+{
+	my $details = shift;
+	my $name = color_nick(GetContact($details->{Sender}));
+	$last_message_from = $details->{Sender};
+	$last_message_url = $details->{URL};
+	add_to_uin_history($last_message_from);
+	$details->{Reason} = color_message(decode($details->{Reason}));
+	my $data = "Chat request from $name\nReason:\n$details->{Reason}\n";
+	$last{GetContact($details->{Sender})}=$data;
+	push @last_uins, GetContact($details->{Sender}) unless in_array(GetContact($details->{Sender}),\@last_uins);
+	if(@last_uins > 10) {
+		shift @last_uins
+	}
+	log_incoming_event($last_message_from, $data);
+	return $data;
+}
+
+
 sub url_handler
 {
 	my $details = shift;
@@ -4249,37 +5049,64 @@ sub url_handler
 	add_to_uin_history($last_message_from);
 	$details->{URL} = color_message(decode($details->{URL}));
 	$details->{Description} = color_message(decode($details->{Description}));
-	my $data = "URL message from $name\nURL : $details->{URL}\nDescription:\n$details->{Description}\n";	
+	my $data = "URL from $name\nURL : $details->{URL}\nDescription:\n$details->{Description}\n";	
 	$last{GetContact($details->{Sender})}=$data;
+	push @last_uins, GetContact($details->{Sender}) unless in_array(GetContact($details->{Sender}),\@last_uins);
+	if(@last_uins > 10) {
+		shift @last_uins
+	}
 	log_incoming_event($last_message_from, $data);
 	return $data;
 }
+
+sub gc_handler
+{
+	my $details = shift;
+	my $name = color_nick(GetContact($details->{Sender}));
+	$last_message_from = $details->{Sender};
+	$last_message_url = $details->{url};
+	add_to_uin_history($last_message_from);
+	$url = color_message(decode($details->{url}));
+	my $data = "Greeting card from $name\n";
+	my $pt = $details->{pre_title};
+	my $sender = color_nick(decode($details->{sender}));
+	my $me = color_nick(decode($details->{recipient}));
+	my $theme = $details->{theme};
+	my $text = decode($details->{text});
+	$data .= separator("$pt $me") . "$text\n" . separator($sender);
+	$data .= "URL: $url\n";
+	$last{GetContact($details->{Sender})}=$data;
+	push @last_uins, GetContact($details->{Sender}) unless in_array(GetContact($details->{Sender}),\@last_uins);
+	if(@last_uins > 10) {
+		shift @last_uins
+	}
+	log_incoming_event($last_message_from, $data);
+	return $data;
+}
+
+
 
 sub sms_response_handler
 {
 	my $details = shift;
 	my $data = '';
-	if($details->{deliverable} ne 'SMTP')
-	{
-		$data = "Response from SMS server:\n" . 
-				"Deliverable  : $details->{deliverable}\n" .
-				"Network      : $details->{network}\n" .
-				"MessageID    : '$details->{message_id}'\n";
+	if($details->{deliverable} ne 'SMTP') {
+		$data = "Response from SMS server:\n" .
+			"Deliverable  : $details->{deliverable}\n" .
+			"Network      : $details->{network}\n" .
+			"MessageID    : '$details->{message_id}'\n";
 		my $sender=$1 if $details->{message_id}=~/-(\d+)\s*$/;
 		$sender ||="SMSC";
 		log_incoming_event( "sms.$sender", $data);
-	} else
-	{
-
+	} else {
 		$data = "Response from SMS server:\n" .
-				"Deliverable : via SMTP\n" . 
-				"To          : $details->{to}\n";
+			"Deliverable : via SMTP\n" .
+			"To          : $details->{to}\n";
 		 my $sender=$1 if $details->{message_id}=~/-(\d+)\s*$/;
 		 $sender ||="SMSC";
 		log_incoming_event("sms.$sender",$data);
 	}
 	return $data;
-
 }
 
 sub auth_request_handler
@@ -4301,7 +5128,6 @@ sub auth_request_handler
 	"\n$reason\n";
 	log_incoming_event( $details->{Sender},$data);
 	return $data;
-
 }
 
 sub add_message_handler
@@ -4321,12 +5147,11 @@ sub contacts_handler
 	my $i = 0;
 	while($i<= $#{$details->{Contacts}})
 	{
-		$data .= "\n" . color_uin($details->{Contacts}->[$i]) . " " .  color_nick("$details->{Contacts}->[$i+1]");
+		$data .= "\n" . color_uin($details->{Contacts}->[$i]) . " " . color_nick("$details->{Contacts}->[$i+1]");
 		$i+=2;
 	}
 	log_incoming_event($last_message_from, $data);
 	return $data;
-
 }
 
 sub user_short_info_handler
@@ -4336,14 +5161,14 @@ sub user_short_info_handler
 		(	$details->{Nickname} ,
 			$details->{Firstname} ,
 			$details->{Lastname} ,
-			$details->{Email}   
+			$details->{Email}
 		);
 	$nick = color_nick(decode($nick));
 	$fname = color_nick(decode($fname));
 	$lname = color_nick(decode($lname));
 	my $uin = color_uin("#$requested_uin");
 
-	my $data = "$uin info:\nNickname   : $nick\n" 
+	my $data = "$uin info:\nNickname   : $nick\n"
 			. "First name : $fname\n"
 			. "Last name  : $lname\n"
 			. "Email      : $email\n";
@@ -4373,7 +5198,7 @@ Delivered   : $details->{delivered}
 Submitted   : $details->{submition_time}
 Delivered   : $details->{delivery_time}
 ~;
-		
+
 	log_incoming_event("sms.$details->{destination}",$data);
 	return $data;
 }
@@ -4381,12 +5206,13 @@ Delivered   : $details->{delivery_time}
 sub wp_result_info_handler
 {
 	my $details = shift;
-	my $uin = color_uin(deocde($details->{UIN}));
+	my $uin = color_uin($details->{UIN});
 	my $nick = color_nick(decode($details->{Nickname}));
 	my $fname = decode($details->{Firstname});
 	my $lname = decode($details->{Lastname});
 	my $email = decode($details->{Email});
-	$search_result .= qq~UIN       : $uin
+	$search_result .= separator($uin);
+	$search_result .= qq~
 Firstname : $fname
 Nickname  : $nick
 Lastname  : $lname
@@ -4400,7 +5226,6 @@ sub ack_offline_handler
 	my $data = "End of offline messages!\n";
 	return $data;
 }
-
 
 sub user_info_not_found_handler
 {
@@ -4425,36 +5250,36 @@ sub wp_final_result_info_handler
 {
 	my $details = shift;
 	my $data = '';
-	if(!$details->{UIN})
-	{
+	if(!$details->{UIN}) {
 		$data .= "Nothing was found :(\n"
-	} else
-	{
+	} else {
+		$data = $search_result;
 		my $uin = color_uin($details->{UIN});
 		my $nick = color_nick(decode($details->{Nickname}));
 		my $fname = decode($details->{Firstname});
 		my $lname = decode($details->{Lastname});
-	my $email = $details->{Email};
-	$data .= $search_result . qq~UIN       : $uin
+		my $email = decode($details->{Email});
+		$data .= separator($uin);
+		$data .= qq~
 Firstname : $fname
 Nickname  : $nick
 Lastname  : $lname
 Email     : $email
 ~;
 	}
-	$data .= "All users found\n";
+	$data .= "All users have been found\n";
 	$search_result = '';
 	return $data;
 }
 
 sub wp_empty_handler
 {
-	return "No UINs found";
+	return "No UINs were found";
 }
 
 sub set_main_info_ack_handler
 {
-	return "Main info set\n";
+	return "Main info has been set\n";
 }
 
 sub user_info_extra_emails_handler
@@ -4473,9 +5298,8 @@ sub user_info_main_handler
 	my $details = shift;
 	my $uin = $requests{$details->{Ref}};
 	foreach ( 'Nickname', 'Firstname', 'Lastname',
-				'Email',  'City',  'State', 'Telephone',
-				'Fax_Num', 'Address', 'Mobile_Phone',
-				'Zip', 'GMT_Code' )
+			'Email', 'City', 'State', 'Telephone', 'Fax_Num',
+			'Address', 'Mobile_Phone', 'Zip', 'GMT_Code' )
 	{
 		$wp{$uin}->{$_} = $details->{$_};
 	}
@@ -4490,6 +5314,26 @@ sub user_info_about_handler
 	return '';
 }
 
+sub password_set_handler
+{
+	return "Password has been changed";
+}
+
+sub sms_error_handler
+{
+	my $details = shift;
+	return "SMS delivery failed:\n" .$details->{Text};
+}
+	
+sub random_uin_handler
+{
+	my $details = shift;
+	my $uin = $details->{UIN};
+	my $out = get_wp_info($uin);
+	$uin = color_uin($uin);
+	return "Got random UIN: $uin\n$out";
+}
+	
 sub user_info_work_handler
 {
 	my $details = shift;
@@ -4523,19 +5367,27 @@ sub user_info_past_background_handler
 
 sub set_permissions_ack_handler
 {
-	return "Web/Auth options set";
+	return "Web/Auth options have been set";
 }
 
 sub status_change_handler
 {
 	my $details = shift;
 	my $data = '';
-	my $status = $details->{Status};
+	my $hexst = sprintf '%04x',$details->{Status};
+	my $status = 0;
+	if(exists $_r_Status_Codes{$hexst}) {
+		$status = $_r_Status_Codes{$hexst};
+	} else {
+		$status = "Unk($hexst)";
+		print "Unknown status code $hexst. Please, report to gonzo\@ukrweb.net\n";
+	}
 	# exists $details->{Status} ? GetStatus($details->{Status}) : 'Offline';
 	# foreach (keys %$details)
 	# {
 		# print "$_ = $details->{$_}\n";
 	# }
+
 	my $ip = $details->{Ip_Address} || 'x.x.x.x';
 	my $contact = GetContact($details->{Sender});
 	my $oldstatus = 'Offline';
@@ -4545,8 +5397,10 @@ sub status_change_handler
 	$mday=$mday>9?$mday:"0$mday";
 	$hour=$hour>9?$hour:"0$hour";
 	$sec=$sec>9?$sec:"0$sec";
-	if(($prefs{$details->{Sender}}{ip} eq 'x.x.x.x') || ($status eq 'Offline'))
-	{
+	if(($oldstatus ne 'Offline') && ($status eq 'Offline')) {
+		$prefs{$details->{Sender}}{lastseen} = localtime();
+	}
+	if (($prefs{$details->{Sender}}{ip} eq 'x.x.x.x') || ($status eq 'Offline')) {
 		$prefs{$details->{Sender}}{ip} = $ip;
 		$prefs{$details->{Sender}}{dc_ip} = $details->{'LAN_IP'};
 		$prefs{$details->{Sender}}{dc_port} = $details->{'LAN_Port'};
@@ -4554,15 +5408,17 @@ sub status_change_handler
 		$prefs{$details->{Sender}}{connection_type} = $details->{'ConnectionType'};
 	}
 	$prefs{$details->{Sender}}{status} = $status;
-	if($prefs{$details->{Sender}}{status} ne $oldstatus)
-	{
+	if($prefs{$details->{Sender}}{status} ne $oldstatus) {
 		unless($config{'mode'} eq 'silent')
 		{
 			my $cstatus = color_status($status);
 			$data = color_time("[$mday $hour:$min:$sec] ") . color_nick($contact) . " changed status to $cstatus";
 			log_incoming_event($details->{Sender},"$contact change status to $cstatus\n") if $config{log_type}=~/s/;
 		}
+
+		# remember latest offline
 	}
+	
 	return $data;
 }
 
@@ -4575,8 +5431,8 @@ sub parse_event_definition{
 		my $nonstop=0;
 		$nonstop=($2 eq '|')?1:0 if (defined $2);
 		my $event = $3;
-		my $orig_nick = defined $4 ? $4 : '';
-		my $orig_status = defined $5 ? $5 : '';
+		my $orig_nick = defined $4 ? substr($4,1) : '';
+		my $orig_status = defined $5 ? substr($5,1) : '';
 		my $nick = ($4)?substr($4,1):'*';
 		my $status = ($5)?substr($5,1):'*';
 		my $command = $6;
@@ -4584,25 +5440,25 @@ sub parse_event_definition{
 		my @commands=();
 		my $cmd='';
 		while ($command ne ''){
-			if ($command =~ /^\s*\".*?\"\s*$/){
-				if ($command =~ s/^(\s*\"(.*?)\"\s*\,?)//){
+			if ($command =~ /^\s*\".*?\"\s*$/) {
+				if ($command =~ s/^(\s*\"(.*?)\"\s*\,?)//) {
 					$cmd.=$2;
 					#warn "1='$1' 2='$2' cmd='$cmd' command='$command'";
 					unless ($cmd =~ s/\\$/"/){
 					#warn "CMD=$cmd";
 					push @commands, $cmd if $cmd;
 					$cmd = '';
-					}else{
+					} else {
 						$command='"'.$command;
 					}
 				}
-			}else{
+			} else {
 				$command =~ s/^\s+//;
 				push @commands, $command;
 				$command ='';
 			}
 		}
-               ## end of parsing commands
+		## end of parsing commands
 		$orig_nick =~ s/^\///g;
 		my $type = $event;
 		# convert glob-style notation to regexp
@@ -4619,18 +5475,18 @@ sub parse_event_definition{
 		$status=~s/\*/\.*/g;
 
 		#print 'type="'.$type.'" nick="'.$nick.'" status=."'.$status.'"';
-		$hook = { 
-				'eventspec'=>$event,
-				'nonstop'=>$nonstop,
-	 			'type'=>$type,
-				'command'=>\@commands,
-				'nick'=>$nick, 
-				'status'=>$status,
-				'active'=>$active,
-				'orig_nick'=>$orig_nick,
-				'orig_status'=>$orig_status,
-				'file'=>'',
-				'line'=>''
+		$hook = {
+			'eventspec'=>$event,
+			'nonstop'=>$nonstop,
+			'type'=>$type,
+			'command'=>\@commands,
+			'nick'=>$nick,
+			'status'=>$status,
+			'active'=>$active,
+			'orig_nick'=>$orig_nick,
+			'orig_status'=>$orig_status,
+			'file'=>'',
+			'line'=>''
 		};
 	}
 	return $hook;
@@ -4642,11 +5498,11 @@ sub compose_event_definition
 	my $hook = shift;
 	my $definition = '';
 	$definition = '!' unless $hook->{active};
+	$definition .= '|' if $hook->{nonstop};
 	$definition .= $hook->{eventspec};
 	$definition .= "/$hook->{orig_nick}" if $hook->{orig_nick} ne '';
 	$definition .= "|$hook->{orig_status}" if $hook->{orig_status} ne '';
-	if($#{$hook->{command}})
-	{
+	if($#{$hook->{command}}) {
 		my @cmds = ();
 		my $cmd;
 		foreach $cmd (@{$hook->{command}})
@@ -4655,8 +5511,7 @@ sub compose_event_definition
 			push @cmds,$cmd;
 		}
 		$definition .= " \"" . join('","',@cmds) . '"';
-	} else
-	{
+	} else {
 		$definition .= " " . $hook->{command}[0];
 	}
 	return $definition;
@@ -4667,3 +5522,51 @@ sub dummy_handler
 	return '';
 }
 
+sub init_terminal
+{
+	my $termios = new POSIX::Termios;
+	$termios->getattr;
+	my $ospeed = $termios->getospeed;
+	
+	# allocate and initialize a terminal structure
+	undef $@;
+	eval { $termcap = Tgetent Term::Cap { TERM => undef, OSPEED => $ospeed };};
+	if($@) {
+
+		print "termcap entry for for your terminal '$ENV{TERM}'\ndoes not found. Output will be simplified\n";
+		$termcap = undef;
+		return;
+	}
+	undef $@;
+	eval { $termcap->Trequire(qw/dl up/);};
+	if($@)
+	{
+		print "termcap entry for for your terminal '$ENV{TERM}'\ndoes not support extended features. Output will be simplified\n";
+		$termcap = undef;
+	}
+	# print $termcap->Tputs('dl', 1);
+	# my $z = $termcap->Tgoto('up', 2, $STDOUT);
+}
+
+
+sub mk_all_dirs
+{
+	my $dir = shift;
+	$dir = expand_file($dir);
+	my $cd = getcwd();
+	my @dirs = split '/', $dir;
+	if($dirs[0] eq '') {
+		shift @dirs;
+		chdir '/';
+	}
+
+	foreach(@dirs)
+	{
+		next if ($_ eq '');
+		if(! -e $_) {
+			mkdir $_,0700;
+		}
+		chdir $_;
+	}
+	chdir $cd;
+}

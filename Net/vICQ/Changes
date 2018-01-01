@@ -1,6 +1,9 @@
 Revision history for Perl extension Net::vICQ.
 
-0.01  Tue Jan  1 14:27:03 2002
-	- original version; created by h2xs 1.19
+0.05 Thu Feb 21 20:23:15 2002
+	- Added direct connections support
+	- Added auth decline support 
 
+0.01 Tue Jan 1 14:27:03 2002
+	- Original version; created by h2xs 1.19
 

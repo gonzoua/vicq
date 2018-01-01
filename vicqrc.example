@@ -1,3 +1,4 @@
+# vICQ config
 [options]
 
 #
@@ -5,8 +6,11 @@
 # 
 
 # Path to log files
-# default:  log_path=~/.vicq.log/
-log_path=~/.vicq.log
+# Default: log_path=~/.vicq/history
+log_path=~/.vicq/history
+
+# Path for storing received files
+incoming_path=~/.vicq/incoming
 
 # Type of log file
 # empty - Don't log
@@ -18,14 +22,16 @@ log_path=~/.vicq.log
 # l - make symlinks <nick>.log to <uin>.log
 #
 # default: log_type=u
-
-log_type=usln
+log_type=uln
 
 # disable separators without text
-disable_empty_separators=0
+disable_empty_separators=1
 
 # autosplit messages longer then 450 characters
 autosplit=1
+
+# autoconnection on startup and disconnects
+autoconnect=1
 
 #
 # Colors
@@ -38,47 +44,52 @@ nick_color=MAGENTA
 message_color=LIGHT_BLUE
 separator_title_color=CYAN
 status_color=YELLOW
+time_color=YELLOW
 my_history_color=YELLOW
 their_history_color=CYAN
 
 #Info
-status=Invisible
-uin=111
+status=Online
+uin=Your_UIN
+password=Your_PASS
 
 # Other
-# We have all ready but don't want to use proxy
+# Example of SOCKS5 proxy
 https_proxy=0
-proxy_port=3128
-proxy_host=proxy.ukrweb.net
-proxy_force_https_port=1
+socks_proxy=1
+proxy_port=1080
+proxy_host=socks-proxy.network.com
+proxy_force_https_port=0
 
 # External URL viewer & sound player
 browser=/usr/local/bin/lynx %u
-player=/usr/local/bin/player -f %f
+#player=/usr/local/bin/player -f %f
 
-# encoding
+# Encoding
 encoding=koi
 separator_length=70
 
-# Sending info request on every uncknown UIN automaticaly
+# Sending info request on every unknown UIN automatically
 auto_info=1
 
-# we dont want to save config on exit
+# We dont want to save config on exit (set to 0 otherwise)
 keep_config=1
 
 # Prompt
 prompt=vICQ(%S)/%U[%h:%m:%s]>
 
-# Do not shoe change_status events
-mode=silent
+# Set to 'silent' not to show change_status events
+mode=normal
 
-# use micq like completion
+# Use micq like completion
 micq_like_completion=1
 
-#Our aliases
-[aliases]
-?=help
+# If not zero ICQ will not show your IP to other users
+hide_ip=0
 
+# Period of inactivity (in seconds)
+away_timeout=600
+na_timeout=1200
 
 [sounds]
 change_status online.wav
@@ -87,20 +98,31 @@ change_status online.wav
 [events]
 # Auto-reply to text messages
 text_message msg %u/Dear %n!\n>%t\nI read this!
-text_message|online msg %u/hi\nI am  online
+text_message|online msg %u/hi\nI am online
 text_message/GonZo|away msg %u/hi GonZo\nI am away
-
 # Just echo all other - external hook example
 * ! echo %e
+# Beep on messages while online and free for chat
+text_message|ffc ! echo 
+text_message|online ! echo 
+
+# Our aliases
+[aliases]
+?=help $*
+q=quit
+m=msg $*
+colors=toggle colors
+re=msg $1/Hi! how's doing?
 
 # SMS section
 [phones]
-Boss +380679999998
-Administrator +380679999999
-Security +380679999996
+Boss 380679999996
 
 [contacts]
 123 Friend
 # alias 
 gf
 *123 GoodFriend
+[contacts Work]
+666 Boss
+5551232 SysAdmin

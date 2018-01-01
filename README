@@ -8,21 +8,26 @@ text-only look & feel, and ICQ v7 protocol support.
 --[ Features
 A few. Nothing fancy, but enough to communicate ;) Right now vICQ can:
 
-	o Send messages 
-	o Receive messages 
-	o Handle visibles/invisibles 
+	o Send and receive messages
 	o Send and receive SMS messages
 	o Send and receive URL messages
 	o Invoke browser on the received URL
-	o Fetch user information from Mirabilis
+	o Handle visibles/invisibles 
+	o Retrieve Server-based contact list
 	o Receive contacts
+	o Receive files
 	o Receive offline messages 
 	o Receive authorization requests 
 	o Grant authorization
 	o Work through HTTPS/SOCKS proxies 
+	o Fetch user information from Mirabilis
 	o Set White Pages basic info
-	o Search through White Pages by email
+	o Search through White Pages
 	o Execute user-defined command on incoming events
+	o Handling incoming direct connection operations:
+		message/URL/contacts/contacts request/status message request
+	o Handling incoming direct connection
+	o Handling server side contacts
 	
 
 --[ Installation
@@ -39,6 +44,13 @@ $perldoc vicq
       cvs -d:pserver:cvs@cvs.ice.ru:/var/lib/cvs login
       cvs -d:pserver:cvs@cvs.ice.ru:/var/lib/cvs co vicq
       Password: cvs
+
+--[ Ports/packages
+	FreeBSD/OpenBSD port maintainer: Kevin Lo <kevlo@openbsd.org>
+	Debian/GNU package maintainer: Luis Bustamante <luferbu@fluidsignal.com>
+
+--[ License
+	vicq is coming under GPL, for details see LICENSE
 
 --[ Thanks
 	Thanks to all code submitters, and bugreporters. 
