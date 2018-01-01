@@ -1,6 +1,8 @@
 #
 # $Id: ChangeLog,v 1.79 2002/02/03 17:38:15 gonzo Exp $
 #
+
+
 13/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
 	o Fixed bug with CR,LF
 	o Fixed bug with perl 5.00xx
@@ -425,3 +427,20 @@
 		while saving config
 	o Security fix $HOME/.vicq will have 0700 permissions while 
 		creating
+
+11/04/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with encoding
+	o Fixed bug with reseting DCInfo & IP
+	o Fixed bug with coloring
+	o Fixed bug with creating empty UIN/nick while starting
+	o Fixed bug with unknown statuses
+
+
+13/04/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Debug output deleted
+
+14/04/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Status change bugfix
+
+15/04/2002 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Coloring bugs in 'w' and 'e' fixed

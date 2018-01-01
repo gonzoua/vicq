@@ -195,9 +195,6 @@ if not equal to B<0> disables separator without text
 
 Number of messages which displays in  user history, if its negative - displays all history
 
-=item B<hide_ip> (integer)
-
-Hide you real IP from other users
 
 =item B<mode> (string)
 
@@ -829,7 +826,7 @@ event",
 
 # UINs for micq-style completion
 my @uin_history;
-
+my @current_uin_history;
 
 
 
@@ -965,6 +962,7 @@ Add_Message_Handler('user_info_personal_interests',
 
 
 my $config_file = expand_file($opts{'c'} || '~/.vicq/config');
+my @x = keys %contacts;
 print &cmd_read;
 # &parse_config;
 
@@ -1790,6 +1788,7 @@ sub parse_file
 	}
 	$file_info{$file}{mtime}= (stat($file))[9];
 	$file_info{$file}{modified}= 0;
+	my @z = keys %contacts;
 	my @lines = <CONF>;
 	my $line_number = -1;
 	foreach (@lines)
@@ -1874,7 +1873,7 @@ sub parse_file
 				$contacts_info{$uin}{line} = $line_number;
 			} else
 			{
-				if($_ ne '')
+				if(($_ ne '') && ($uin ne ''))
 				{
 					push (@{$contacts{$uin}{aliases}},$_);
 				}
@@ -2203,7 +2202,7 @@ sub read_description
 		last if($_ eq '.');
 		if($_ eq '#') 
 		{
-			$text = '';
+			$text = '#';
 			last;
 		}
 		$text .= "$_\r\n";
@@ -2332,7 +2331,7 @@ sub koi2rus
 	map { s/\xFD/Sch/g } @str;
 	map { s/\xFE/Ch/g  } @str;
 
-	return @str;
+	return join ('', @str);
 }
 
 
@@ -2495,7 +2494,7 @@ sub log_event{
 	$uin =~ s/\033\[.m//g;
 
 	my $fname=($config{log_type}=~/a/)?'vicq.log':"$uin.log";
-	open LOG,">> $config{log_path}$fname" or warn "Can't open file  $config{log_path}$fname";
+	open LOG,">> $config{log_path}$fname" or warn "Can't open file $config{log_path}$fname";
 	print LOG "--[$format $now_string\n";
 	print LOG $message;
 	print LOG "\n" if $config{log_type}=~/n/;
@@ -2525,14 +2524,13 @@ sub invoke_hook {
 		if ($event_type=~/$hook->{type}/i && $nick=~/$hook->{nick}/i && $status=~/$hook->{status}/i && $hook->{active}) {
 			foreach my $command (@{$hook->{command}}){
 				my $cmdline = $command;
-				if($cmdline =~ /^\s*!/)
-				{
-					$nick =~ s/([;<>\*\|`&\$!#\(\)\[\]\{\}:'"])/\\$1/g;
- 
-					$text =~ s/\n/ /g;
-					$text =~ s/([;<>\*\|`&\$!#\(\)\[\]\{\}:'"])/\\$1/g;
-				}
-				$cmdline=~s/%([%eutnsEUTNS])/&hook_subst($1,$event_type,$uin,$text)/eg;
+                $qtext = $text;
+                if($cmdline =~ /^\s*!/)
+                {
+                    $ENV{VICQ_MESSAGE} = $qtext;
+                    $qtext = '$VICQ_MESSAGE';
+                }
+				$cmdline=~s/%([%eutnsEUTNS])/&hook_subst($1,$event_type,$uin,$qtext)/eg;
 				# print ">> $cmdline\n";
 				my $res = parse_command($cmdline);
 				print "\n",$res,"\n" if($config{debug_hooks});
@@ -2815,7 +2813,7 @@ sub send_url_message
 {
 	my ($uin,$url,$desc) = @_;
 	$last_message_to = $uin;
-	if($desc eq '') { return 'URL canceled!'; }
+	if($desc eq '#') { return 'URL canceled!'; }
 		my %details = ( uin => $uin,
 						MessageType => 'url',
 						URL =>  encode($url),
@@ -3074,16 +3072,20 @@ sub is_interactive
 }
 
 sub tab{
-	return unless (@uin_history && $gnu_readline);
-	my $uin=pop @uin_history;
-	unshift @uin_history, $uin;
-	$term->clear_message();
-	$term->delete_text(0);
-	$term->Attribs->{line_buffer}="msg $uin/";
-	$term->Attribs->{end}=length($term->Attribs->{line_buffer});
-	$term->Attribs->{point}=$term->Attribs->{end};
-	$term->redisplay();
-	return '';
+	@current_uin_history=@uin_history unless @current_uin_history;
+	return unless (@current_uin_history && $gnu_readline);
+	my $s=$term->Attribs->{line_buffer};
+	if ($s =~ /^\s*(msg\s+.+\/?)\s*$/) 
+	{
+		my $uin=pop @current_uin_history;
+		unshift @current_uin_history, $uin;
+		$term->clear_message();
+		$term->delete_text(0);
+		$term->Attribs->{line_buffer}="msg $uin/";
+		$term->Attribs->{end}=length($term->Attribs->{line_buffer});
+		$term->Attribs->{point}=$term->Attribs->{end};
+		$term->redisplay();
+	}
 }
 
 sub add_to_uin_history{
@@ -3097,6 +3099,7 @@ sub add_to_uin_history{
 		$i++;
 	}
 	push @uin_history, $uin;
+	@current_uin_history=@uin_history;
 	return "";
 }
 
@@ -3848,7 +3851,7 @@ sub cmd_w
 			$uin = "*$uin";
 		}
 		$uin = sprintf "%20s",$uin;
-		$uin = $colors{$config{nick_color}} . $uin . $colors{NORMAL};
+		$uin = color_nick($uin);
 		print "$uin [$ip] ($status)\n";
 	}
 	print separator('Online users');
@@ -3869,7 +3872,7 @@ sub cmd_w
 		}
 
 		$uin = sprintf "%20s",$uin;
-		$uin = $colors{$config{nick_color}} . $uin . $colors{NORMAL};
+		$uin = color_nick($uin);
 		print "$uin [$ip] ($status)\n";
 	}
 	print separator();
@@ -3894,7 +3897,7 @@ sub cmd_e
 			$uin = "~$uin";
 		}
 		$uin = sprintf "%20s",$uin;
-		$uin = $colors{$config{nick_color}} . $uin . $colors{NORMAL};
+		$uin = color_nick($uin);
 		print "$uin [$ip] ($status)\n";
 	}
 	print separator();
@@ -4128,7 +4131,7 @@ sub cmd_version
 	if($Id =~ / (\d+\.\d+) /)
 	{
 		my $rev = $1;
-		my $version = '0.4';
+		my $version = '0.4.1';
 		if($config{colors})
 		{
 			$version = $colors{YELLOW} . $version . $colors{NORMAL};
@@ -4275,7 +4278,7 @@ sub auth_request_handler
 	my $last_message_from = $details->{Sender};
 	my $email = decode($details->{mail});
 	add_to_uin_history($last_message_from);
-	my $Sender = color_uin($details->{Sender});
+	my $Sender = color_uin(GetContact($details->{Sender}));
 	my $data = "Authorization request from $Sender\n" .
 	"Nick       :     $nick\n" .
 	"First name :     $first_name\n" .
@@ -4364,11 +4367,11 @@ Delivered   : $details->{delivery_time}
 sub wp_result_info_handler
 {
 	my $details = shift;
-	my $uin = color_uin($details->{UIN});
-	my $nick = color_nick($details->{Nickname});
-	my $fname = $details->{Firstname};
-	my $lname = $details->{Lastname};
-	my $email = $details->{Email};
+	my $uin = color_uin(deocde($details->{UIN}));
+	my $nick = color_nick(decode($details->{Nickname}));
+	my $fname = decode($details->{Firstname});
+	my $lname = decode($details->{Lastname});
+	my $email = decode($details->{Email});
 	$search_result .= qq~UIN       : $uin
 Firstname : $fname
 Nickname  : $nick
@@ -4414,9 +4417,9 @@ sub wp_final_result_info_handler
 	} else
 	{
 		my $uin = color_uin($details->{UIN});
-		my $nick = color_nick($details->{Nickname});
-		my $fname = $details->{Firstname};
-		my $lname = $details->{Lastname};
+		my $nick = color_nick(decode($details->{Nickname}));
+		my $fname = decode($details->{Firstname});
+		my $lname = decode($details->{Lastname});
 	my $email = $details->{Email};
 	$data .= $search_result . qq~UIN       : $uin
 Firstname : $fname
@@ -4528,19 +4531,22 @@ sub status_change_handler
 	$mday=$mday>9?$mday:"0$mday";
 	$hour=$hour>9?$hour:"0$hour";
 	$sec=$sec>9?$sec:"0$sec";
-	$prefs{$details->{Sender}}{ip} = $ip;
+	if(($prefs{$details->{Sender}}{ip} eq 'x.x.x.x') || ($status eq 'Offline'))
+	{
+		$prefs{$details->{Sender}}{ip} = $ip;
+		$prefs{$details->{Sender}}{dc_ip} = $details->{'LAN_IP'};
+		$prefs{$details->{Sender}}{dc_port} = $details->{'LAN_Port'};
+		$prefs{$details->{Sender}}{icq_version} = $details->{'ICQ_Version'};
+		$prefs{$details->{Sender}}{connection_type} = $details->{'ConnectionType'};
+	}
 	$prefs{$details->{Sender}}{status} = $status;
-	$prefs{$details->{Sender}}{dc_ip} = $details->{'LAN_IP'};
-	$prefs{$details->{Sender}}{dc_port} = $details->{'LAN_Port'};
-	$prefs{$details->{Sender}}{icq_version} = $details->{'ICQ_Version'};
-	$prefs{$details->{Sender}}{connection_type} = $details->{'ConnectionType'};
 	if($prefs{$details->{Sender}}{status} ne $oldstatus)
 	{
 		unless($config{'mode'} eq 'silent')
 		{
 			my $cstatus = color_status($status);
-			$data = color_time("[$mday $hour:$min:$sec] ") . color_nick($contact) . " change status to  $cstatus";
-			log_incoming_event($details->{Sender},"$contact change status to  $cstatus\n") if $config{log_type}=~/s/;
+			$data = color_time("[$mday $hour:$min:$sec] ") . color_nick($contact) . " changed status to $cstatus";
+			log_incoming_event($details->{Sender},"$contact change status to $cstatus\n") if $config{log_type}=~/s/;
 		}
 	}
 	return $data;

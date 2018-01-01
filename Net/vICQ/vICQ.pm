@@ -3,6 +3,7 @@
 ## $Id: vICQ.pm,v 1.10 2002/02/01 16:09:39 gonzo Exp $ 
 ##########################################################
 
+
 ##########################################################
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -15,7 +16,6 @@
 # GNU General Public License for more details.
 # See LICENSE for details
 ##########################################################
-
 
 
 package  Net::vICQ;
@@ -331,16 +331,26 @@ sub Add_Hook {
 );
 
 %_r_Status_Codes = (
-	  '0000'  => 'Online',
-	  '0002'  => 'Online', # Im not sure :(( Let it be 'Online'
-	  '0020'  => 'Free for Chat',
-	  '0001'  => 'Away',
-	  '0004'  => 'N/A',
-	  '0005'  => 'N/A',
-	  '0010'  => 'Occupied',
-	  '0011'  => 'Occupied',
-	  '0013'  => 'Do Not Disturb',
-	  '0100'  => 'Invisible'
+	'ffff' => 'Offline',
+	'0000' => 'Online',
+	'0002' => 'Online', # Im not sure :(( Let it be 'Online'
+	'0020' => 'Free for Chat',
+	'0001' => 'Away',
+	'0004' => 'N/A',
+	'0005' => 'N/A',
+	'0008' => 'N/A',
+	'0010' => 'Occupied',
+	'0011' => 'Occupied',
+	'0013' => 'Do Not Disturb',
+	'0100' => 'Invisible',
+	'0120' => 'Free for Chat[inv]',
+	'0101' => 'Away[inv]',
+	'0104' => 'N/A[inv]',
+	'0105' => 'N/A[inv]',
+	'0110' => 'Occupied[inv]',
+	'0111' => 'Occupied[inv]',
+	'0113' => 'Do Not Disturb[inv]',
+	'0200' => 'Online[99a]'
 );
 
 
@@ -1205,6 +1215,11 @@ sub Add_Hook {
 		my $st = 0;
 		$st = $Refined->{Status} if exists $Refined->{Status};
 		$st &= 0xffff;
+		if($st > 0x100)
+		{
+			# Inv-away inv-online ignores etc.. 
+			$st -= 0x100;
+		}
         my $hexst =  sprintf '%04x',$st;
 		$Refined->{MessageType} = "status_change";
 		if(exists $_r_Status_Codes{$hexst})
