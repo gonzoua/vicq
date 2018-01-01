@@ -24,6 +24,8 @@ log_type=usln
 # disable separators without text
 disable_empty_separators=0
 
+# autosplit messages longer then 450 characters
+autosplit=1
 
 #
 # Colors
@@ -65,10 +67,13 @@ auto_info=1
 keep_config=1
 
 # Prompt
-prompt=vICQ(%s)/%u>
+prompt=vICQ(%S)/%U[%h:%m:%s]>
 
 # Do not shoe change_status events
 mode=silent
+
+# use micq like completion
+micq_like_completion=1
 
 #Our aliases
 [aliases]
@@ -78,6 +83,15 @@ mode=silent
 [sounds]
 change_status online.wav
 * %e.wav
+
+[events]
+# Auto-reply to text messages
+text_message msg %u/Dear %n!\n>%t\nI read this!
+text_message|online msg %u/hi\nI am  online
+text_message/GonZo|away msg %u/hi GonZo\nI am away
+
+# Just echo all other - external hook example
+* ! echo %e
 
 # SMS section
 [phones]

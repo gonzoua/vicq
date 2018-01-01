@@ -1,0 +1,16 @@
+1) vicq and vICQ.pm installation
+ bash$su
+ bash#./install.pl
+
+2) vICQ.pm installation
+ bash$cd Net/vICQ/
+ bash$perl Makefile.PL
+ bash$make
+ bash$make test
+ bash$su
+ bash#make install
+
+If you have no root permissions, you should change first line in script from
+#!/path/to/perl -- to
+#!/path/to/perl -I/path/to/vicq/
+Where '/path/to/vicq/' - path to this distributive, not to script
