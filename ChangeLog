@@ -1,16 +1,189 @@
 13/11/2001	Alexander Timoshenko <gonzo@ukrweb.net>
 	o Fixed bug with CR,LF
 	o Fixed bug with perl 5.00xx
-	o Added msg nick/message feature
-	o Added win1251/koi8 converting
+	o msg nick/message feature have been added
 
 14/11/2001 Alexander Timsohenko <gonzo@ukrweb.net>
 	o Net::ICQ2000 integrated into script
-	o Added 'r','a' command (thanks to Alexander Gornyi)
-	o beep() added
-	o Added Coloring
+	o 'r','a' command (thanks to Alexander Gornyi) have been added
+	o beep() have been added
+	o Coloring have been added
 	o Section contact looks like in .micqrc
 
 
 15/11/2001 Alexander Timsohenko <gonzo@ukrweb.net>
 	o Added 'e' command (thanks to Jonas Björklund <jonasb@hem.passagen.se>)
+
+19/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with missing spaces (thanks to Santtu Lakkala)
+	o Password reading have been added(if not in config)
+	o Message cancel command('#') have been (thanks to mds)
+	o fixed bug with users switch to offline
+	o fixed bug with extra CR,LF (thanks to Santtu Lakkala)
+	o Correct handling of password missmatch have been added
+	o Gnu readline features have been added(see README)
+
+19/11/2001 Victor Wagner <vitus@ice.ru>
+	o Shell escape command ('!') have been added
+	o Code cleanup
+	o Sent messages saves in logs
+	o Commands aliaases
+	o Events hooks (documentation will be soon)
+	o 'help' command have been changed
+
+
+20/11/2001 Victor Wagner <vitus@ice.ru>
+	o sms messages support have been added
+	o Password saving bug have been fixed
+
+20/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o  koi8-u support (see README!!!) have been added
+	o 'url' command have been added 
+	o 'view' command have been added 
+	o Sound config have been added (thanks to Viacheslav Kaloshin <multik@asplinux.ru>)
+	
+21/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o 'info' command added
+	o koi8-u (win2koi sub) have been fixed according to specification
+
+21/11/2001 Victor Wagner <vitus@ice.ru>
+	o sms replies support have been added
+	o code clean-up
+	o readline option depricated(now trying determine automaticaly 
+		ReadLine lib - gnu or Stub)
+
+21/11/2001 Dmitry Astapov <adept@umc.com.ua>
+	o https proxy support
+
+22/11/2001 Victor Wagner <vitus@ice.ru>
+	o Added ability to change XTerm title (without restoring back for a
+	while)
+	o added 'finger' command
+        o Made substitution of %u, %n and %t safe from malicious shell
+	  metacharacters
+
+22/11/2001 Dmitry Astapov <adept@umc.com.ua>
+	o nickname/uin completion
+	o README spellchecking
+
+22/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o command completion completition 
+	o enhanced config file saving subroutine
+
+
+23/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with new config reading routine
+	o Fixed bug with https proxy support
+	o Network code improvenet - now works with slow
+		connections or slow proxies
+
+23/11/2001 Serge Matveev <serge@matveev.spb.ru>
+	o Hostname resolving in 'finger' command
+
+24/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with unproper configuration save
+	o Fixed bug with invalid log filenames
+	o normal/quiet modes have been added
+	o Compatibility with non-standard clients
+		(Miranda, Mac clients may be) have been added
+	o auto_info option
+
+24/11/2001 Danil Lavrentyuk <eleneldil@arilou.org>
+	o SMS phonebook added
+	o external SMS phonebook added
+
+
+24/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o message input history lines does not appear in command line now
+	o Fixed bug with history
+	o Add 'prompt' config variable
+	o not_save_config now keep_config
+	o Added sms_response handler
+	o Added sms_delivery_receipt handler
+	o Rewritten _Decode_Tagged_Text (may be unstable, mail me 
+		if "Invalid itagged .." appears)
+	o 'ffc' command added
+	o 'UIN not found' handler added
+	o UIN/nick aliases added
+
+25/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o URL send now can be canceled by entering '#' in URL description
+	o Command '?' is deprecated. Use alias instead
+	o Code clean-up and remastering
+	o Messages log format chaged
+	o History added
+	o Keep-alive packets added(every 60 seconds)
+	o Command 'quiet' changed to 'silent'
+	o 'finger' command improvement
+	o fixed bug in _bytes_to_str
+
+26/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with HTTPs protocol
+	o Aliases added to autocompletion
+
+29/11/2001 Serge Matveev  <serge@matveev.spb.ru>
+	o Contact-list now sorts by alphabed
+
+29/11/2001 Vovik Alyekhin <flea@is.com.ua>
+	o 'save' command added
+	o log_path and log_type variables added (see README)
+	o Case insensitive steup variables names
+
+30/11/2001 Vovik Alyekhin <flea@is.com.ua>
+	o Fixed bug with empty log_type
+
+
+30/11/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o 'help' command format changed
+	o POD documantation added (a part of it)
+	o 'toginvis' command added
+	o Visibility/invisibility managing improved
+	o 'include' config directive added
+	o Major config changes
+
+
+30/11/2001 Vovik Alyekhin <flea@is.com.ua>
+	o 'set' command added
+	o 'disable_empty_separators' config variable added
+
+1/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Added 'search' color
+	o Rewrite output system
+	o 'history_entries' config variable added
+	o -o run-time option added
+
+
+3/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Coloring bug fixed
+	o BOLD, REVERSE, UNDERSCORE attributes added
+	o Info data now decodes to koi
+
+
+3/12/2001 Alexandr Bravo <abravo@tanja.spb.ru>
+	o SMS time bug fixed
+	o perl-5.003 syntax compatibility fix
+
+
+4/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Config location changes (now its: ~/.vicq/config)
+	o 'info' command improvement
+	o 'wpset' command added - experimental(deeeeep alpha!!!)
+	o White pages support bugfixes
+
+
+4/12/2001 Vovik Alyekhin <flea@is.com.ua>
+	o Empty values in set bugfix
+
+
+5/12/2001 Dmitry Astapov <adept@umc.com.ua>
+	o ESC-sequences in log_event bugfix
+
+5/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o CONFIGURATION section POD documentation
+	o install.pl script added
+	o Intial config creation bug fixed
+	o vICQ 0.3 released :) 
+
+6/12/2001 Alexander Timoshenko <gonzo@ukrweb.net>
+	o Nasty bug with authorization fixed 
+	o wpset bug fixed 

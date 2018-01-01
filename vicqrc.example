@@ -1,8 +1,92 @@
 [options]
-status=Online
-uin=101
-password=xxx
-encoding=koi8
+
+#
+# Log options
+# 
+
+# Path to log files
+# default:  log_path=~/.vicq.log/
+log_path=~/.vicq.log
+
+# Type of log file
+# empty - Don't log
+# or string of
+# a - log to <log_path>/vicq.log 
+# u - log to <log_path>/<uin>.log
+# s - log online/offline changes
+# n - make new lines between log records
+# l - make symlinks <nick>.log to <uin>.log
+#
+# default: log_type=u
+
+log_type=usln
+
+# disable separators without text
+disable_empty_separators=0
+
+
+#
+# Colors
+#
+colors=1
+colored_history=1
+uin_color=MAGENTA
+separator_color=BLUE
+nick_color=MAGENTA
+message_color=LIGHT_BLUE
+separator_title_color=CYAN
+status_color=YELLOW
+my_history_color=YELLOW
+their_history_color=CYAN
+
+#Info
+status=Invisible
+uin=111
+
+# Other
+# We have all ready but don't want to use proxy
+https_proxy=0
+proxy_port=3128
+proxy_host=proxy.ukrweb.net
+proxy_force_https_port=1
+
+# External URL viewer & sound player
+browser=/usr/local/bin/lynx %u
+player=/usr/local/bin/player -f %f
+
+# encoding
+encoding=koi
+separator_length=70
+
+# Sending info request on every uncknown UIN automaticaly
+auto_info=1
+
+# we dont want to save config on exit
+keep_config=1
+
+# Prompt
+prompt=vICQ(%s)/%u>
+
+# Do not shoe change_status events
+mode=silent
+
+#Our aliases
+[aliases]
+?=help
+
+
+[sounds]
+change_status online.wav
+* %e.wav
+
+# SMS section
+[phones]
+Boss +380679999998
+Administrator +380679999999
+Security +380679999996
+
 [contacts]
-102 Friend
-*103 GoodFriend
+123 Friend
+# alias 
+gf
+*123 GoodFriend

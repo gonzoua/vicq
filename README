@@ -1,74 +1,208 @@
-[About]
+	
+--[ About
 
-vICQ is simple ICQ client written in PERL with look & fill of micq 
-and works fine with v7 protocol of ICQ. To run it you need Net::ICQ2000 
-module installed. Module written by Robin Fisher <robin@phase3solutions.com>
-and slightly modified by me. Original version could be found here.
+vICQ is a simple text-mode ICQ client written with look and feel of
+micq in mind.  Its features: PERL source code suitable for hacking 
+and scripting, text-only look & feel, and ICQ v7 protocol support.
+vICQ is licensed under the GPL.
 
-[Features]
-A few. But enough to communicate ;) 
+--[ Features
+A few. Nothing fancy, but enough to communicate ;) Right now vICQ can:
 
-	o Sending messages 
-	o Receiving messages 
-	o Invisible handling 
-	o Recieving contacts 
-	o Recieving offline messages 
-	o Acking offline messages 
-	o Recieving auth requests 
-	o Sending authorization 
+	o Send messages 
+	o Receive messages 
+	o Handle visibles/invisibles 
+	o Send and recieve SMS messages
+	o Send and recieve URL messages
+	o Invoke browser on the recieved URL
+	o Fetch user information from Mirabilis
+	o Recieve contacts
+	o Recieve offline messages 
+	o Recieve authorization requests 
+	o Grant authorization
+	o Send SMS messages
+	o Work through HTTPS proxies 
+	o Set White pages basic info
+	o Search through White Pages by email
+	
 
-[Installation]
-Im to lazy to write installation script 
+--[ Installation
+./install.pl --help
 
-bash#cp vicq /usr/local/bin/
-bash#exit
-bash$cat > ~/.vicqrc
-[options]
-uin=Your_UIN
-password=Your_PASSWORD
-[contacts]
-^D
-bash$vicq
+--[ Config
+Config file (~/.vicq/config) consists of several sections described below.
+Each section starts with header line like this: '[section_name]'.
+Lines starting with '#' are comments.  You can split entire config 
+in several file using 'include' directive. BUT! You should place whole 
+section in one file, the section header should be placed in the same file.
+Example of using include you can find  at 
+http://www.gonzo.kiev.ua/projects/vicq/eg/
 
-[Config]
+Sections:
 
-bash$cat > ~/.vicqrc
-[options]
-uin=Your_UIN
-password=Your_PASSWORD
-[contacts]
-^D
+The '[options]' section contains run-time options. Each option is
+in "name=value" format (case-sensitive).
 
-[options] section consists of string which looks like name=value
+
 Available options:
+
 uin - your uin
 password - your password
-encoding - koi or win, encoding on your terminal
-status - initial status. Valid are:
-Online
-Free_For_Chat
-Away
-Not_Avalible
-Occupied
-Do_Not_Disturb
-Invisible
+NB! Option not_save_config is now keep_config
+keep_config - if you dont want to save config on exit set this
+	variable to 1: keep_config=1
+encoding - "koi" or "win", depending on your terminal
+NB! I have added koi8-u support. If you found any bugs with encodings mail me
+auto_info - if not zero, vICQ will request info on every UIN 
+	which is not in ContactList automaticaly
+prompt - main vICQ prompt template. The following variables
+will be parsed and may be used in prompt string:
+	%s - by short description of your status
+	%u - by your uin
+Example:
+prompt=vICQ(%s)/%u>
 
-[contacts] section the same as in .micqrc
+sms_phonebook - path to external file with sms phones in '[phones]' format
+	section tag ('[phones]') is must for this file.
 
-To add user to visible list add before UIN asterisk ('*')
-See vicqrc.example
+separator_length - length of separator line
+disable_empty_separators - if not equal to "0" disables separator without text
+history_entries number of messages which displays in  user history,
+	if its negative - displays all history
+
+mode - 'normal' or 'silent'. In 'silent' mode change_status events 
+	does not appear on screen.
+status - initial status. Valid values are:
+	Online
+	Free_For_Chat
+	Away
+	Not_Avalible
+	Occupied
+	Do_Not_Disturb
+	Invisible
+
+colors - if this is not "0", vicq will use colors.
+colored_history - if this is not 0, vICQ use colors for 
+	history output(You can set you PAGER environment 
+	variable to "less -R" for using color)
+separator_color - color of the separator line
+separator_title_color - color for the title separator
+nick_color - color for highlighting nicknames
+uin_color - color for highlighting uins
+status_color - color for highlighting status
+message_color - message color
+their_history_color - color for incoming events in history
+my_history_color - color for outgoing events in history
+
+Valid colors are:
+        NORMAL
+        YELLOW
+        MAGENTA
+        WHITE
+        BLACK
+        RED
+        GREEN
+        BROWN
+        BLUE
+        CYAN
+        LIGHT_CYAN
+        LIGHT_RED
+        LIGHT_GREEN
+        LIGHT_BLUE
+
+player - command for playing sounds (see '[sounds]' section):
+              "/path/to/player -f %f -o /dev/dsp". "%f" will be replaced 
+with filename chosen according to the '[sounds]' section
+
+browser - command for browsing received URLs:
+		"/path/to/browser -navigator %u". "%u" will be replaced with 
+		last recieved url
+
+https_proxy - if not "0", vICQ with work through HTTPS-capable proxy
+proxy_host, proxy_port - specify your proxy parameters here
+proxy_force_https_port - if "1", always connect to login.icq.com on port 
+"443", regardless of what specified in the reconnection messages
+	Example:
+		https_proxy=1
+		proxy_port=3128
+		proxy_host=10.25.0.99
+		proxy_force_https_port=1
+
+	log_path - parth where logs saves. Example:
+log_path=~/.vicq.log
+
+	log_type - specifies method which logs saves. Its a string
+if  its empty - don't log, else calls methods correspondingly 
+chars which appears in strings. Valid chars: 
+a - log to <log_path>/vicq.log
+u - log to <log_path>/<uin>.log
+s - log status changes
+n - make newlines between log records
+l - make symlinks <nick>.log to <uin>.log
+
+default: log_type=u. Example:
+log_type=usln
+
+The '[aliases]' section contains command aliases. Its format is "alias=command".
+	Example:
+		m=msg
 
 
-[TODO]
+The '[phones]' section contains phonebook for SMS messages in "nick phone"
+format, for example:
+	squid +380xxxxx
+	ReY +380xxxxxx
+	You can use these aliases in 'sms' command
+	
+
+
+
+The '[events]' section contains run-time options. Its format is 
+"event command" where "event" is the type of event (could be 
+glob-style wildcard), and "command" is an external command name 
+to be executed when event occurs.  The following variables 
+will be parsed and may be used in "command" string:
+	%e - by type of event
+	%u - by sender's uin
+	%n - by sender's nick
+	%t - by message text (or status value if type of event is 'status_change')
+
+	Example:
+		* echo 'Event %e from %n(%u) : %t' | mail mymail@myhost.com
+		(send email to mymail@myhost.com with the full description of 
+			the recieved event)
+
+Section '[sounds]' is similar to '[events]' section, allowing you 
+to specify audio files played upon various incoming events. Playback 
+will be done through the "player" application defined in the '[option]' 
+section, with '%f' token substituted with the proper filename.
+
+
+At last, [contacts] section lists UINs, format is the same as in .micqrc:
+	UIN Nickname
+To add user to visible list add asterisk ('*') before UIN (see vicqrc.example)
+If you want be invisible to user add tilde ('~') before UIN
+If you want create alias for UIN/Nick just add aliases in the line below UIN
+(see vicqrc.example)
+
+--[ TODO
 TO DO or not TO DO, that is the question 
 
-	o Add coloring(i cann't live without it) 
-	o Replace Term::ReadLine with own readline routine 
-	o Add info command 
-	o Add commands to change User Preferences 
-	o Koi8<->Win1251 converting for cyrillic users
+	o Add internal event hooks 
+	o Add autoresponder 
+	o Add aliases for external commands 
 	o Your suggestions? 
 
-[Download]
+--[ Download
 	http://www.gonzo.kiev.ua/projects/vicq/
+
+	You can download latest vicq sources using anonymous CVS from cvs.ice.ru:
+      cvs -d:pserver:cvs@cvs.ice.ru:/var/lib/cvs login
+      cvs -d:pserver:cvs@cvs.ice.ru:/var/lib/cvs co vicq
+      Password: cvs
+
+--[ Thanks
+	Thanks to all code submiters, and bugreporters. 
+	Thanks to Cyril Reyda for his efforts in creation of the program name :).
+	Thanks to all my friends @icc.univ.kiev.ua and @univ.kiev.ua
 

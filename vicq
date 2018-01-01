@@ -1,5 +1,10 @@
-#!/usr/bin/perl
+#!/usr/bin/perl  --
+# $Id: vicq,v 1.46 2001/12/05 13:58:48 gonzo Exp $
 use Term::ReadLine;
+use Getopt::Std;
+use Socket;
+
+$| =1;
 
 #################################
 ##
@@ -17,13 +22,19 @@ use vars qw(
   %_New_Connection_Nefotiation_Codes
   %_TLV_OUT %_TLV_IN %_TLV_Length_O %_TLV_Length_I %_Srv_Codes
   %_Srv_Decoder %_Cmd_Codes %_Cmd_Encoder
-  %_Status_Codes %_r_Status_Codes
+  %_Status_Codes %_r_Status_Codes %_Short_Status_Desc %_ICQ_Versions
 );
 
 use Time::Local;
 use IO::Socket;
 use IO::Select;
+use POSIX qw(:errno_h);
 use Carp;
+
+my %config;
+my %wp;
+my %requests;
+my %files;
 
 sub new {
 	my($Package, $UIN, $Password, $AutoConnect, $ServerAddress, $ServerPort) = @_;
@@ -46,11 +57,16 @@ sub new {
 		_Connected => 0,
 		_LoggedIn => 0,
 		_FLAP_Bytes_Left => 0,
+		_FLAP_Header_Bytes_Left => 6,
+		_FLAP_SubHeader_Bytes_Left => 4,
+		_FLAP_Header => [],
+		_FLAP_Sub_Header => [],
 		_FLAP_In_progress => undef,
 		_Mem => 1,
 		_Auto_Login => 1, #one means minimum, two means full ICQ logon, 0 means none/developer deals with it..
 		_Auto_Login_Contact_List => [],
 		_Auto_Login_Visible_List => [],
+		_Auto_Login_Invisible_List => [],
 		_Sent_Requests => {},
 		_Status => "Online",
 		_Debug => 0
@@ -72,10 +88,23 @@ sub Connect {
 	$Me->{_UIN} or croak("Attempted to connect without UIN!");
 	$Me->{_Password} or croak("Attempted to connect without Password!");
 
+	if( $config{https_proxy} ) {
+		
+		$config{proxy_host} or croak("No proxy host specified");
+		$config{proxy_port} or croak("No proxy port specified");
+		if ( $config{proxy_force_https_port} ) {
+			$Me->{_ServerPort} = "443";
+		}
+	    
+		$Me->{_Socket} = IO::Socket::INET->new( Proto => "tcp",
+		   						PeerAddr  => $config{proxy_host},
+								PeerPort  => $config{proxy_port}) or croak("socket error: $@");
+    	$Me->{_Socket}->send("CONNECT $Me->{_Server}:$Me->{_ServerPort} HTTP/1.0\n\n");
+    } else {
 	$Me->{_Socket} = IO::Socket::INET->new( Proto	 => "tcp",
 						PeerAddr  => $Me->{_Server},
 						PeerPort  => $Me->{_ServerPort}) or croak("socket error: $@");
-
+	}		
 	$Me->{_Select} = IO::Select->new($Me->{_Socket});
 	$Me->{_Connected} = 1;
 }
@@ -92,6 +121,23 @@ sub Disconnect {
 	$Me->{_Incoming_Queue} = [];
 	$Me->{_Outgoing_Queue} = [];
 }
+
+
+sub Send_Keep_Alive {
+	my($Me, $UIN, $Pass) = @_;
+	return if (!$Me->{_Connected});
+	my($Responce);
+	####
+	# I didnt find any proper info about keep-alive packets
+	# except that its use fifth channel
+	# at least it doesnt couse errors - let it be
+	####
+	$Responce->{Channel_ID} = 5;
+	push(@{$Me->{_Outgoing_Queue}}, $Responce);
+
+}
+
+
 
 
 sub Set_Login_Details {
@@ -133,10 +179,28 @@ sub Add_Hook {
 	'Online'		 => 0x00020000,
 	'Free_For_Chat'  => 0x00020020,
 	'Away'		   => 0x00020001,
-	'Not_Avalible'   => 0x00020005,
+	'Not_Available'   => 0x00020005,
 	'Occupied'	   => 0x00020011,
 	'Do_Not_Disturb' => 0x00020013,
 	'Invisible'	  => 0x00120100
+);
+
+%_Short_Status_Desc = (
+	'Online'		 => 'online',
+	'Free_For_Chat'  => 'ffc',
+	'Away'		   => 'away',
+	'Not_Available'   => 'na',
+	'Occupied'	   => 'occ',
+	'Do_Not_Disturb' => 'dnd',
+	'Invisible'	  => 'inv'
+);
+
+
+%_ICQ_Versions = (
+	4 => 'icq98',
+	6 => 'licq',
+	7 => 'icq2000',
+	8 => 'icq2001'
 );
 
 %_r_Status_Codes = (
@@ -245,6 +309,18 @@ sub Add_Hook {
 		@{$Responce->{Data_Load}} = &_Make_SNAC_Header(1, 30, 0, 0, 30);
 
 		push(@{$Responce->{Data_Load}}, _Write_TLV(2, 'Status', $_Status_Codes{$event->{Status}}));
+		push(@{$Responce->{Data_Load}}, _Write_TLV(2, 'ErrorCode', 0));
+		push(@{$Responce->{Data_Load}}, _int_to_bytes(4,0x000c0025));
+		push(@{$Responce->{Data_Load}}, _int_to_bytes(4,0)); # IP
+		push(@{$Responce->{Data_Load}}, _int_to_bytes(4,0)); # Port
+		push(@{$Responce->{Data_Load}}, _int_to_bytes(1,4)); # ????
+		push(@{$Responce->{Data_Load}}, _int_to_bytes(2,0x0008)); # Version
+		push(@{$Responce->{Data_Load}}, _int_to_bytes(4,0x00000050)); # ???
+		push(@{$Responce->{Data_Load}}, _int_to_bytes(4,0x00000003)); # ???
+		push(@{$Responce->{Data_Load}}, _int_to_bytes(4,time())); # time_t???
+		push(@{$Responce->{Data_Load}}, _int_to_bytes(4,time())); # time_t???
+		push(@{$Responce->{Data_Load}}, _int_to_bytes(4,time())); # time_t???
+		push(@{$Responce->{Data_Load}}, _int_to_bytes(2,0)); # ???
 
 		push(@{$Me->{_Outgoing_Queue}}, $Responce);
 
@@ -347,6 +423,21 @@ sub Add_Hook {
 		push(@{$Me->{_Outgoing_Queue}}, $Responce);
 
 	},
+	#Cmd_BOS_Remove_VisibleList
+	'9:6' => sub {
+		my($Me, $event) = @_;
+		my($Responce);
+
+		@{$Responce->{Data_Load}} = &_Make_SNAC_Header(9, 6, 0, 0, 6);
+
+		foreach (@{$event->{VisibleList}}){
+			push(@{$Responce->{Data_Load}}, _int_to_bytes(1, length($_)));
+			push(@{$Responce->{Data_Load}}, _str_to_bytes($_));
+		}
+		push(@{$Me->{_Outgoing_Queue}}, $Responce);
+
+	},
+
 	#Cmd_BOS_Add_InVisibleList
 	'9:7' => sub {
 		my($Me, $event) = @_;
@@ -361,6 +452,22 @@ sub Add_Hook {
 		push(@{$Me->{_Outgoing_Queue}}, $Responce);
 
 	},
+	#Cmd_BOS_Remove_InVisibleList
+	'9:8' => sub {
+		my($Me, $event) = @_;
+		my($Responce);
+
+		@{$Responce->{Data_Load}} = &_Make_SNAC_Header(9, 8, 0, 0, 8);
+
+		foreach (@{$event->{InVisibleList}}){
+			push(@{$Responce->{Data_Load}}, _int_to_bytes(1, length($_)));
+			push(@{$Responce->{Data_Load}}, _str_to_bytes($_));
+		}
+		push(@{$Me->{_Outgoing_Queue}}, $Responce);
+
+	},
+
+
 
 
 	#Cmd_Authorize
@@ -421,6 +528,34 @@ sub Add_Hook {
 			push(@{$Responce->{Data_Load}}, @TempPacket);
 			push(@{$Me->{_Outgoing_Queue}}, $Responce);
 		}
+		elsif($event->{MessageType} eq 'url')
+		{
+			@{$Responce->{Data_Load}} = &_Make_SNAC_Header(4, 6, 0,0,0x00010006);
+			my $uin = $event->{uin};
+			my $url = $event->{URL};
+			my $desc = $event->{Description};
+			my $msg = $desc . "\xfe" . $url;
+			my$len = length($msg)+9;
+			push(@TempPacket, _int_to_bytes(4,0x52995d00));
+			push(@TempPacket, _int_to_bytes(4,0x69230000));
+			push(@TempPacket, _int_to_bytes(2,0x0004));
+			push(@TempPacket, _uin_to_buin($uin));
+			push(@TempPacket, _int_to_bytes(2,0x0005)); #TLV
+			push(@TempPacket, _int_to_bytes(2,$len)); # TLV
+			push(@TempPacket, _int_to_endian_bytes(4,$Me->{_UIN}));
+			push(@TempPacket, _int_to_bytes(2,0x0400)); # flags
+
+			$msg = "$msg\x00";
+			$len = length($msg);
+			push(@TempPacket, _int_to_endian_bytes(2,$len)); # TLV
+			push(@TempPacket, _str_to_bytes($msg));
+			push(@TempPacket, _int_to_bytes(2,0x0006)); # final TLV
+			push(@TempPacket, _int_to_bytes(2,0x0000)); # Final TLV
+			push(@{$Responce->{Data_Load}}, @TempPacket);
+			push(@{$Me->{_Outgoing_Queue}}, $Responce);
+			
+			
+		}
 		
 	},
 	#Cmd_Add_List
@@ -431,7 +566,7 @@ sub Add_Hook {
 		push(@{$Responce->{Data_Load}}, _int_to_bytes(1, 0x00));
 		# $Me->{_Mem}++;
 		push(@{$Me->{_Outgoing_Queue}}, $Responce);
-		push(@TempPacket, _int_to_endian_bytes(4, 41316677));#encode the ICQ num..
+		push(@TempPacket, _int_to_endian_bytes(4, 11111111));#encode the ICQ num..
 		push(@TempPacket, _int_to_bytes(2, 0x7fd1));
 		push(@TempPacket, _int_to_bytes(2, 0x7fd1));
 		push(@TempPacket, _int_to_bytes(3, 0x0));
@@ -495,7 +630,7 @@ sub Add_Hook {
 			push(@TempPacket, _int_to_bytes(17, 0));
 
 			my $TimeString = gmtime();
-			if ($TimeString =~ /(\w+) (\w+) (\d+) (\d+:\d+:\d+) (\d+)/){
+			if ($TimeString =~ /(\w+) (\w+)\s+(\d+) (\d+:\d+:\d+) (\d+)/){
 				$TimeString = $1.", ".$3." ".$2." ".$5." ".$4." GMT";
 			}
 			else {
@@ -513,6 +648,166 @@ sub Add_Hook {
 
 			push(@TempPacket, _str_to_bytes($SMSMessage));
 			push(@TempPacket, _int_to_bytes(1, 0)); #null end..
+		} 
+		elsif ($event->{MessageType} eq "User_Short_Info_Request")
+		{
+			push(@TempPacket, _int_to_bytes(2, 0xd007));
+			push(@TempPacket, _int_to_endian_bytes(2, $Me->{_Mem}));
+			push(@TempPacket, _int_to_bytes(2, 0xba04));
+			push(@TempPacket, _int_to_endian_bytes(4, $event->{TargetUIN}));#encode the ICQ num..
+
+		}
+		elsif ($event->{MessageType} eq "Get_WP_Info")
+		{
+			push(@TempPacket, _int_to_bytes(2, 0xd007));
+			push(@TempPacket, _int_to_endian_bytes(2, $Me->{_Mem}));
+			$requests{($Me->{_Mem}-1)*65536+0x02} = $event->{TargetUIN};
+			push(@TempPacket, _int_to_bytes(2, 0xb204));
+			push(@TempPacket, _int_to_endian_bytes(4, $event->{TargetUIN}));#encode the ICQ num..
+
+		}
+
+
+		elsif ($event->{MessageType} eq "Self_Info_Request")
+		{
+			push(@TempPacket, _int_to_bytes(2, 0xd007));
+			push(@TempPacket, _int_to_endian_bytes(2, $Me->{_Mem}));
+			push(@TempPacket, _int_to_bytes(2, 0xd004));
+			push(@TempPacket, _int_to_endian_bytes(4, $Me->{_UIN}));#encode the ICQ num..
+			print ">> $Me->{_UIN}\n";
+
+		} 
+		elsif ($event->{MessageType} eq "Set_Main_WP_Info")
+		{
+			push(@TempPacket, _int_to_bytes(2, 0xd007));
+			push(@TempPacket, _int_to_endian_bytes(2, $Me->{_Mem}));
+			push(@TempPacket, _int_to_bytes(2, 0xea03));
+			push(@TempPacket, _str_to_lnts($event->{_nickname}));
+			push(@TempPacket, _str_to_lnts($event->{_firstname}));
+			push(@TempPacket, _str_to_lnts($event->{_lastname}));
+			push(@TempPacket, _str_to_lnts($event->{_email}));
+			push(@TempPacket, _str_to_lnts($event->{_city}));
+			push(@TempPacket, _str_to_lnts($event->{_state}));
+			push(@TempPacket, _str_to_lnts($event->{_phone}));
+			push(@TempPacket, _str_to_lnts($event->{_fax}));
+			push(@TempPacket, _str_to_lnts($event->{_street}));
+			push(@TempPacket, _str_to_lnts($event->{_cellular}));
+			push(@TempPacket, _str_to_lnts($event->{_zip}));
+			push(@TempPacket, _int_to_endian_bytes(2,$event->{_country}));
+			push(@TempPacket, _int_to_bytes(1,$event->{_GMT}));
+			push(@TempPacket, _int_to_bytes(1,0));
+
+		} 
+
+		elsif ($event->{MessageType} eq "User_Info_Request")
+		{
+			push(@TempPacket, _int_to_bytes(2, 0xd007));
+			push(@TempPacket, _int_to_endian_bytes(2, $Me->{_Mem}));
+			push(@TempPacket, _int_to_bytes(2, 0xb204));
+			push(@TempPacket, _int_to_endian_bytes(4, $event->{TargetUIN}));#encode the ICQ num..
+
+		} 
+		elsif ($event->{MessageType} eq "WP_Full_Request")
+		{
+			push(@TempPacket, _int_to_bytes(2, 0xd007));
+            push(@TempPacket, _int_to_endian_bytes(2, $Me->{_Mem}));
+            push(@TempPacket, _int_to_bytes(2, 0x3305));
+
+		#max 20 on everything unless noted
+		#first
+            push(@TempPacket, _int_to_bytes(1, length($event->{_firstname})+1));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+            push(@TempPacket, _str_to_bytes($event->{_firstname}));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+
+		#last
+            push(@TempPacket, _int_to_bytes(1, length($event->{_lastname})+1));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+            push(@TempPacket, _str_to_bytes($event->{_lastname}));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+		#nick            
+		    push(@TempPacket, _int_to_bytes(1, length($event->{_nickname})+1));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+            push(@TempPacket, _str_to_bytes($event->{_nickname}));
+            push(@TempPacket, _int_to_bytes(1, 0x00));	
+		#email (max 25)
+            push(@TempPacket, _int_to_bytes(1, length($event->{_email})+1));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+            push(@TempPacket, _str_to_bytes($event->{_email}));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+		#Min age
+            push(@TempPacket, _int_to_bytes(1, $event->{_min_age}));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+		#Max age
+            push(@TempPacket, _int_to_bytes(1, $event->{_max_age}));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+		#Sex (0,1,2)
+            push(@TempPacket, _int_to_bytes(1, $event->{_sex}));
+		#Language (0...see table)
+            push(@TempPacket, _int_to_bytes(1, $event->{_language}));
+		#city
+            push(@TempPacket, _int_to_bytes(1, length($event->{_city})+1));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+            push(@TempPacket, _str_to_bytes($event->{_city}));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+		#state (max 3)
+            push(@TempPacket, _int_to_bytes(1, length($event->{_state})+1));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+            push(@TempPacket, _str_to_bytes($event->{_state}));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+		#country (see table)
+            push(@TempPacket, _int_to_bytes(1, $event->{_country}));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+		#company-name
+            push(@TempPacket, _int_to_bytes(1, length($event->{_company_name})+1));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+            push(@TempPacket, _str_to_bytes($event->{_company_name}));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+		#company-department
+            push(@TempPacket, _int_to_bytes(1, length($event->{_company_dep})+1));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+            push(@TempPacket, _str_to_bytes($event->{_company_dep}));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+		#company-position
+            push(@TempPacket, _int_to_bytes(1, length($event->{_company_pos})+1));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+            push(@TempPacket, _str_to_bytes($event->{_company_pos}));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+		#company-occupation 
+            push(@TempPacket, _int_to_bytes(1, $event->{_company_occ}));
+		#past information category
+            push(@TempPacket, _int_to_bytes(2, $event->{_past_info_cat}));
+		#past information
+            push(@TempPacket, _int_to_bytes(1, length($event->{_past_info_desc})+1));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+            push(@TempPacket, _str_to_bytes($event->{_past_info_desc}));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+		#interests category (see table)
+            push(@TempPacket, _int_to_bytes(1, $event->{_interests_cat}));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+		#interests specific - comma, delim
+            push(@TempPacket, _int_to_bytes(1, length($event->{_interests_desc})+1));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+            push(@TempPacket, _str_to_bytes($event->{_interests_desc}));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+		#organization 
+            push(@TempPacket, _int_to_bytes(1, $event->{_org_cat}));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+		#organization specific - comma, delim
+            push(@TempPacket, _int_to_bytes(1, length($event->{_org_desc})+1));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+            push(@TempPacket, _str_to_bytes($event->{_org_desc}));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+		#homepage category 
+            push(@TempPacket, _int_to_bytes(2, $event->{_homepage_cat}));
+		#homepage 
+            push(@TempPacket, _int_to_bytes(1, length($event->{_homepage})+1));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+            push(@TempPacket, _str_to_bytes($event->{_homepage}));
+            push(@TempPacket, _int_to_bytes(1, 0x00));
+		#Only online users (0 or 1)
+            push(@TempPacket, _int_to_bytes(1, $event->{_online_only}));
+
 		}
 
 		#NOW work out that length thingy (what a crappy place for it!!!)
@@ -602,6 +897,9 @@ sub Add_Hook {
 				if($Me->{_Status} eq 'Invisible')
 				{
 					$Me->Send_Command("Cmd_BOS_Add_VisibleList", {VisibleList=> $Me->{_Auto_Login_Visible_List}});
+				} else
+				{
+					$Me->Send_Command("Cmd_BOS_Add_InVisibleList", {InVisibleList=> $Me->{_Auto_Login_Invisible_List}});
 				}
 				$Me->Send_Command("Cmd_GSC_Set_Status", $details);
 				$Me->Send_Command("Cmd_GSC_Client_Ready");
@@ -643,6 +941,18 @@ sub Add_Hook {
 		$Refined->{UIN} = _bytes_to_str($event->{Data_Load}, $i, $DataLength);$i += $DataLength + 4;
 
 		($Refined, $i) = _Read_TLV($event->{Data_Load}, 2, $i, $Refined, _bytes_to_int($event->{Data_Load}, $i-4, 4));
+		if($Refined->{'LANInfo'})
+		{
+			my @data = split //,$Refined->{'LANInfo'};
+			foreach (@data)
+			{
+				$_ = ord;
+			}
+			$Refined->{'LAN_IP'} = inet_ntoa(_bytes_to_str(\@data,0,4));
+			$Refined->{'LAN_Port'} = _bytes_to_int(\@data,4,4);
+			$Refined->{'ICQ_Version'} = _bytes_to_int(\@data,9,2);
+			undef $Refined->{'LANInfo'};
+		}
 
 		return ($Refined);
 	},
@@ -722,7 +1032,11 @@ sub Add_Hook {
 			# my @bytes = _str_to_bytes($data);
 			# print ">> [$type] @bytes <<\n";
 			#print "$bytes[2]\n";
-			if($type == 12) # Auth request!
+			if($type == 12) # You have been added
+			{
+				$Refined->{MessageType} = "add_message";
+			}	
+			elsif($type == 6) # Auth request!
 			{
 				$i++;
 				my $data = _bytes_to_str($event->{Data_Load}, $i, $DataLength-4);
@@ -735,6 +1049,15 @@ sub Add_Hook {
 				$Refined->{reason} = $reason;
 				$Refined->{MessageType} = "auth_request";
 			}	
+			elsif($type == 1) # ????
+			{
+				$Refined->{MessageType} = "Normal";
+				my $DataLength = _bytes_to_int ($event->{Data_Load}, $i, 2);
+				$i += 2;
+				$Refined->{text} = _bytes_to_str($event->{Data_Load}, $i, $DataLength);
+
+				
+			}
 			elsif($type == 4) # URL
 			{
 					$Refined->{MessageType} = "URL";
@@ -837,6 +1160,7 @@ sub Add_Hook {
 
 		#the first of the sub sub types..
 		$Refined->{MessageType} = _endian_bytes_to_int($event->{Data_Load}, $i, 2);$i += 2;
+		# print "\n>> ",$Refined->{MessageType},"\n";
 		if ($Refined->{MessageType} == 65){
 			# normally offline messages..
 			if (_endian_bytes_to_int($event->{Data_Load}, $i, 2) == 2){
@@ -869,25 +1193,23 @@ sub Add_Hook {
 					$DataLength = _bytes_to_int ($event->{Data_Load}, $i, 2);
 					my $data = _bytes_to_str($event->{Data_Load}, $i+2, $DataLength);
 					($Refined->{Description},$Refined->{URL}) = split /\xfe/,$data;
-				}elsif ($Refined->{Message_Encoding} == 5)
+				}elsif ($Refined->{Message_Encoding} == 6)
 				{
 					my $DataLength = _bytes_to_int($event->{Data_Load}, $i, 2);
 					$i+=2;
 					$i+=4;
 					my $type = ord(_bytes_to_str($event->{Data_Load}, $i, 1));
 					$i++;
-					 # print "++> $type";
-					if($type == 12) # Auth request!
+					if($type == 48) # Auth request!
 					{
 						$i++;
 						my $data = _bytes_to_str($event->{Data_Load}, $i, $DataLength-4);
 						my($nick,$fname,$lname,$email,$xxx,$reason); 
-						($nick,$fname,$lname,$email,$xxx,$reason) = split /\xfe/,$data;
 						$Refined->{nick} = $nick;
 						$Refined->{first_name} = $fname;
 						$Refined->{last_name} = $lname;
 						$Refined->{email} = $email;
-						$Refined->{reason} = $reason;
+						$Refined->{reason} = $data;
 						$Refined->{MessageType} = "auth_request";
 					}	
 				}elsif ($Refined->{Message_Encoding} == 26)
@@ -929,23 +1251,279 @@ sub Add_Hook {
 			$Me->Send_Command("Cmd_Srv_Message", {MessageType => "ack_offline"});
 			$Refined->{MessageType} = "ack_offline";
 		}
-		elsif ($Refined->{MessageType} == 2010){
-			#Server messages stored in "html" style tags..
-			$i += 2;
+        elsif ($Refined->{MessageType} == 2010){
+            #Server messages stored in "html" style tags..
+            $i += 2;
 
-			if (_bytes_to_int($event->{Data_Load}, $i, 2) == 41480) {
-				#short gap.. (this is a VERY bad way of doing this.. should fix..)
-				$i += 3;
+            
+            $Refined->{SubMessageType} = _bytes_to_int($event->{Data_Load}, $i, 3); $i+=3;
+			# print ">> ", $Refined->{SubMessageType}, "\n";
+
+			
+			if($Refined->{SubMessageType} == 9830410)
+			{
+		        if (_bytes_to_int($event->{Data_Load}, $i, 2) == 41480) {
+		            #short gap.. (this is a VERY bad way of doing this.. should fix..)
+		            $i += 3;
+                }
+		        else {
+		            #don't know what these 11(?) bytes do..
+		            $i += 11;
+		        }
+
+
+	            $Refined->{TaggedDataString} = _bytes_to_str($event->{Data_Load}, $i+3, _bytes_to_int($event->{Data_Load}, $i, 2));
+	            $Refined = _Decode_Tagged_Text($Refined->{TaggedDataString}, $Refined);
+				
 			}
-			else {
-				#don't know what these 11(?) bytes do..
-				$i += 11;
+			elsif($Refined->{SubMessageType} == 262410)
+			{	
+				my($BytesToCount);
+			    $BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Nickname}        = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1);  $i += $BytesToCount;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Firstname}       = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1);  $i += $BytesToCount;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Lastname}        = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1);  $i += $BytesToCount;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Email}           = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1);  $i += $BytesToCount;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{MessageType} = 'User_Short_Info';
+
+				
+			}
+			elsif($Refined->{SubMessageType} == 262420) {
+				$Refined->{MessageType} = "User_Info_NotFound";
+			}
+			elsif($Refined->{SubMessageType} == 10618890) {
+			    #Ads stuff
+        		$Refined->{MessageType} = "Tagged_Srv_Responce";
+		        if (_bytes_to_int($event->{Data_Load}, $i, 2) == 41480) {
+		            #short gap.. (this is a VERY bad way of doing this.. should fix..)
+		            $i += 3;
+                }
+		        else {
+		            #don't know what these 11(?) bytes do..
+		            $i += 11;
+		        }
+
+	            $Refined->{TaggedDataString} = _bytes_to_str($event->{Data_Load}, $i+2, _bytes_to_int($event->{Data_Load}, $i, 2));
+	            $Refined = _Decode_Tagged_Text($Refined->{TaggedDataString}, $Refined);
+			}
+			elsif($Refined->{SubMessageType} == 10748170) {
+			#Info Request return)
+			    my($BytesToCount);
+				$Refined->{MessageType} ="WP_result_info";
+				#Unknown word
+				$i += 2;
+				$Refined->{UIN}             = _endian_bytes_to_int($event->{Data_Load}, $i, 4); $i += 4;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Nickname}        = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1); $i += $BytesToCount;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Firstname}       = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1); $i += $BytesToCount;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Lastname}        = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1); $i += $BytesToCount;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Email}           = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1); $i += $BytesToCount;
+				$Refined->{Auth_Required}   = _bytes_to_int($event->{Data_Load}, $i, 1); $i +=1;
+				$Refined->{Status}          = _bytes_to_int($event->{Data_Load}, $i, 1); $i += 1;
+				#always ends with a 00
+			}
+			elsif($Refined->{SubMessageType} == 10748210 || $Refined->{SubMessageType} == 11403570) {
+			    $Refined->{MessageType} = "WP_Empty";
+			    #Empty White Page Result
+
+			}
+			elsif(($Refined->{SubMessageType}  & 0xffff00) == 0x640000){ #11403530) {
+				$Refined->{MessageType} ="Set_Main_Info_Ack";
+			}
+			elsif(($Refined->{SubMessageType}  & 0xffff00) == 0xae0100){ #11403530) {
+			    my($BytesToCount);
+			    $Refined->{MessageType} ="WP_final_result_info";
+				#Unknown word
+				$i += 2;
+				$Refined->{UIN}             = _endian_bytes_to_int($event->{Data_Load}, $i, 4); $i += 4;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Nickname}        = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1); $i += $BytesToCount;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Firstname}       = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1); $i += $BytesToCount;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Lastname}        = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1); $i += $BytesToCount;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Email}           = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1); $i += $BytesToCount;
+				$Refined->{Auth_Required}   = _bytes_to_int($event->{Data_Load}, $i, 1); $i +=1;
+				$Refined->{Status}          = _bytes_to_int($event->{Data_Load}, $i, 1); $i += 1;
+				#Some weird 3 bytes are thrown in - perhaps
+				#a counter for total unreturned results?
+				#always ends with 00 
 			}
 
-			$Refined->{TaggedDataString} = _bytes_to_str($event->{Data_Load}, $i+2, _bytes_to_int($event->{Data_Load}, $i, 2));
-			_Decode_Tagged_Text($Refined->{TaggedDataString}, $Refined);
-		}
+			
+			elsif($Refined->{SubMessageType} == 13107210) {
+				my ($BytesToCount);
+				$Refined->{MessageType} = "User_Info_Main";
+                
+                #This isn't really correcy, since it's endian data and not normal, but
+                # this will only be shown if any name etc is longer then 255 chars..
+			    $BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Nickname}        = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1);  $i += $BytesToCount;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Firstname}       = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1);  $i += $BytesToCount;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Lastname}        = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1);  $i += $BytesToCount;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Email}           = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1);  $i += $BytesToCount;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{City}            = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1);  $i += $BytesToCount;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{State}           = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1);  $i += $BytesToCount;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Telephone}       = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1);  $i += $BytesToCount;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Fax_Num}         = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1);  $i += $BytesToCount;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Address}         = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1);  $i += $BytesToCount;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Mobile_Phone}    = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1);  $i += $BytesToCount;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Zip}             = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1);  $i += $BytesToCount;
+				$Refined->{Country}    = _bytes_to_int($event->{Data_Load}, $i, 1); $i += 2;
+				$Refined->{GMT_Code}        = _bytes_to_int($event->{Data_Load}, $i, 1); $i += 2;
+				
+			}
+			elsif($Refined->{SubMessageType} == 15400970) {
+			    my($BytesToCount, $Extra_Email_Count);
+			    $Refined->{MessageType} = "User_Info_Extra_Emails";
 
+				$Extra_Email_Count = $Refined->{Extra_Email_Count} = _bytes_to_int($event->{Data_Load}, $i, 1); $i += 2;
+				
+				#Grab all the extra E-mails, and place them into an array..
+				while ($Extra_Email_Count > 0){
+				    $BytesToCount    = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				    push(@{$Refined->{Extra_Emails}}, _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1)); $i += $BytesToCount+1;
+				    $Extra_Email_Count--;
+				}
+				
+			}
+			elsif($Refined->{SubMessageType} == 14417930) {
+			    my ($BytesToCount);
+			    $Refined->{MessageType} = "User_Info_homepage";
+			    
+			    #one of the 0 bytes may be the homepage category, but who cares about that
+				$Refined->{Age}         = _bytes_to_int($event->{Data_Load}, $i, 1); $i += 2;      
+				$Refined->{Sex}         = _bytes_to_int($event->{Data_Load}, $i, 1); $i += 1;      
+				$BytesToCount           = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;      
+			 	$Refined->{Homepage}    = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1); $i += $BytesToCount;      
+				$Refined->{Birth_Year}  = _endian_bytes_to_int($event->{Data_Load}, $i, 2); $i +=2;
+				$Refined->{Birth_Month} = _bytes_to_int($event->{Data_Load}, $i, 1); $i +=1;
+				$Refined->{Birth_Day}   = _bytes_to_int($event->{Data_Load}, $i, 1); $i +=1;
+				$Refined->{Language1}   = _bytes_to_int($event->{Data_Load}, $i, 1); $i +=1;
+				$Refined->{Language2}   = _bytes_to_int($event->{Data_Load}, $i, 1); $i +=1;
+				$Refined->{Language3}   = _bytes_to_int($event->{Data_Load}, $i, 1); $i +=1;
+				
+			}
+			elsif($Refined->{SubMessageType} == 917770) {
+				$Refined->{MessageType} = "User_Info_Unknown";
+			}
+			elsif($Refined->{SubMessageType} == 16384020) {
+				$Refined->{MessageType} = "User_Info_NotFound";
+			}
+
+			elsif($Refined->{SubMessageType} == 13762570) {
+			    my($BytesToCount);
+				$Refined->{MessageType} = "User_Info_Work";
+				
+				#work DC000A
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Company_City}    = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1); $i += $BytesToCount;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Company_State}   = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1); $i += $BytesToCount;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Company_Phone}   = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1); $i += $BytesToCount;
+				$BytesToCount               = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Company_Fax}   = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1); $i += $BytesToCount;
+	
+				#odd 6 bytes, 2 sets of 01 00 00, almost like 2 sets of dwords that are empty
+				# $i += 4;
+				$BytesToCount        = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Company_Address}     = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1); $i += $BytesToCount;
+				$BytesToCount                   = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Company_Zip}         = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1); $i += $BytesToCount;
+				# $i+=2;
+				$Refined->{Company_Country}     = _bytes_to_int($event->{Data_Load}, $i, 1); $i +=2;
+				$BytesToCount                   = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Company_Name}        = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1); $i += $BytesToCount;
+				$BytesToCount                   = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Company_Department}  = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1); $i += $BytesToCount;
+				$BytesToCount                   = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Company_Position}    = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1); $i += $BytesToCount;
+				$Refined->{Company_Occupation}  = _bytes_to_int($event->{Data_Load}, $i, 1); $i += 2;
+				$BytesToCount                   = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{Company_URL}         = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1); $i += $BytesToCount;
+				
+			}
+			elsif($Refined->{SubMessageType} == 15073290) {
+			#about)
+			    my ($BytesToCount);
+			    $Refined->{MessageType} = "User_Info_About";
+				$BytesToCount = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+				$Refined->{about} = _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1); $i += $BytesToCount;
+			}
+			elsif($Refined->{SubMessageType} == 15728650 ) {
+			#Personal Interests)
+			    my ($BytesToCount, $Int_Count);
+			    $Refined->{MessageType} = "User_Info_Personal_Interests";
+				
+				$Int_Count = $Refined->{Interests_Count} = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=1;
+				
+				while ($Int_Count >0){
+				    $Int_Count--;
+				    
+				    push(@{$Refined->{Interests_Type}}, _bytes_to_int($event->{Data_Load}, $i, 2)); $i += 2;
+					$BytesToCount = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+					push(@{$Refined->{Interests_Desc}}, _bytes_to_str($event->{Data_Load}, $i, $BytesToCount-1)); $i += $BytesToCount;
+				}
+				
+			}
+			elsif($Refined->{SubMessageType} == 16384010) {
+			#Past Interests Info)
+				$Refined->{MessageType} = "User_Info_Past_Background";
+				$Refined->{_background_count} = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=1;
+				if($Refined->{_background_count} > 0) {
+					$Refined->{_background_category1} = _bytes_to_int($event->{Data_Load}, $i, 2); $i += 2;
+					$Refined->{BytesToCount} = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+					$Refined->{_background_description1} = _bytes_to_str($event->{Data_Load}, $i, $Refined->{BytesToCount}-1); $i += $Refined->{BytesToCount};
+				}
+				if($Refined->{_background_count} > 1) {
+					$Refined->{_background_category2} = _bytes_to_int($event->{Data_Load}, $i, 2); $i += 2;
+					$Refined->{BytesToCount} = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+					$Refined->{_background_description2} = _bytes_to_str($event->{Data_Load}, $i, $Refined->{BytesToCount}-1); $i += $Refined->{BytesToCount};
+				}
+				if($Refined->{_background_count} > 2) {
+					$Refined->{_background_category3} = _bytes_to_int($event->{Data_Load}, $i, 2); $i += 2;
+					$Refined->{BytesToCount} = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+					$Refined->{_background_description3} = _bytes_to_str($event->{Data_Load}, $i, $Refined->{BytesToCount}-1); $i += $Refined->{BytesToCount};
+				}
+				$Refined->{_organization_count} = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=1;
+				if($Refined->{_organization_count} > 0) {
+					$Refined->{_organization_category1} = _bytes_to_int($event->{Data_Load}, $i, 2); $i += 2;
+					$Refined->{BytesToCount} = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+					$Refined->{_organization_description1} = _bytes_to_str($event->{Data_Load}, $i, $Refined->{BytesToCount}-1); $i += $Refined->{BytesToCount};
+				}
+				if($Refined->{_organization_count} > 1) {
+					$Refined->{_organization_category2} = _bytes_to_int($event->{Data_Load}, $i, 2); $i += 2;
+					$Refined->{BytesToCount} = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+					$Refined->{_organization_description2} = _bytes_to_str($event->{Data_Load}, $i, $Refined->{BytesToCount}-1); $i += $Refined->{BytesToCount};
+				}
+				if($Refined->{_organization_count} > 2) {
+					$Refined->{_organization_category3} = _bytes_to_int($event->{Data_Load}, $i, 2); $i += 2;
+					$Refined->{BytesToCount} = _bytes_to_int($event->{Data_Load}, $i, 1); $i+=2;
+					$Refined->{_organization_description3} = _bytes_to_str($event->{Data_Load}, $i, $Refined->{BytesToCount}-1); $i += $Refined->{BytesToCount};
+				}
+			}
+
+        }
+        
 		return ($Refined);
 	}
 );
@@ -964,7 +1542,9 @@ sub Add_Hook {
 	Cmd_Mes_Param_Info		  => "4:4",
 	Cmd_BOS_Get_Rights		  => "9:2",
 	Cmd_BOS_Add_VisibleList	 => "9:5",
+	Cmd_BOS_Remove_VisibleList	 => "9:6",
 	Cmd_BOS_Add_InVisibleList   => "9:7",
+	Cmd_BOS_Remove_InVisibleList   => "9:8",
 	Cmd_Srv_Message			 => "21:2",
 	Cmd_Send_Message			=> "4:6",
 	Cmd_Add_ContactList			=> "19:20",
@@ -989,6 +1569,7 @@ sub Add_Hook {
 	Srv_Mes_Rights_Response => "4:5",
 	Srv_Mes_Received		=> "4:7",
 	Srv_BOS_Rights		  => "9:3",
+	Srv_Password_Missmatch	=> "9:9",
 	Srv_Srv_Message		 => "21:3"
 );
 
@@ -1022,7 +1603,7 @@ sub Add_Hook {
 		push(@{$Responce->{Data_Load}}, _Write_TLV(1, 'Password', &_Password_Encrypt($Me->{_Password})));
 		push(@{$Responce->{Data_Load}}, _Write_TLV(1, 'ClientProfile', "ICQ Inc. - Product of ICQ (TM).2000b.4.63.1.3279.85"));
 		push(@{$Responce->{Data_Load}}, _Write_TLV(1, 'ClientType', 266));
-		push(@{$Responce->{Data_Load}}, _Write_TLV(1, 'ClientVersionMajor', 4));
+		push(@{$Responce->{Data_Load}}, _Write_TLV(1, 'ClientVersionMajor', 5));
 		push(@{$Responce->{Data_Load}}, _Write_TLV(1, 'ClientVersionMinor', 63));
 		push(@{$Responce->{Data_Load}}, _Write_TLV(1, 'ClientICQNumber',	1));
 		push(@{$Responce->{Data_Load}}, _Write_TLV(1, 'ClientBuildMajor',   3279));
@@ -1037,16 +1618,18 @@ sub Add_Hook {
 sub _Disconnection_Nefotiation {
 	my ($Me, $event) = @_;
 	my ($Details, $i);
-
 	print "Incomming..\n" if $Me->{_Debug};
 	_print_packet($event->{Data_Load}, ())  if $Me->{_Debug};
 
 	($Details, $i) = &_Read_TLV($event->{Data_Load}, 4);
+	if($Details->{Error_Code} == 5)
+	{
+		$Details->{Password_Error} = 1;
+	}
 
 	croak("Server got our UIN wrong!![".$Details->{UIN}."]") if ($Details->{UIN} != $Me->{_UIN});
 
 	$Me->{_Connection_Cookie} = $Details->{Connection_Cookie} if ($Details->{Connection_Cookie});
-
 	if ($Details->{Server_And_Port}){
 		#we've been told to disconnect, and reconnect...
 		print "Disconnecting as instructed..\n";
@@ -1060,8 +1643,12 @@ sub _Disconnection_Nefotiation {
 	}
 	elsif ($Details->{Password_Error}){
 		#run the PasswordError hook 9,9
-		if (exists $Me->{_Hooks}{$_->{9}{9}} ) {
-			&{$Me->{_Hooks}{9}{9}}($Me, $_)
+		# if (exists $Me->{_Hooks}{$_->{9}{9}} ) {
+			# &{$Me->{_Hooks}{9}{9}}($Me, $_)
+		# }
+
+		if (exists $Me->{_Hooks}{"9:9"} ) {
+			&{$Me->{_Hooks}{"9:9"}}($Me, $_)
 		}
 	}
 	elsif ($Details->{Dual_User_Online}){
@@ -1069,19 +1656,34 @@ sub _Disconnection_Nefotiation {
 		if (exists $Me->{_Hooks}{$_->{9}{10}} ) {
 			&{$Me->{_Hooks}{9}{10}}($Me, $_)
 		}
+	} else
+	{
 	}
+	
 }
 
 sub Check_Incoming {
 	my ($Me) = @_;
-	my($RawPacket, @Packet);
+	my($RawPacket, @Packet,$http_status);
 
 	while (IO::Select->select($Me->{_Select}, undef, undef, .00001)) {
 		$Me->{_Socket}->recv($RawPacket, 10000);
 
 		if (!$RawPacket) {
+			
+			print "==> ",POSIX::errno(),"\n";
 			$Me->Disconnect;
 			return;
+		}
+		# @Packet =  split(//, $RawPacket);
+		# print ">>",$RawPacket,"\n";
+		if( $config{https_proxy} && $RawPacket =~ /^HTTP\/1\.[01] (\d+)/) {
+			$http_status = $1;
+			if ( $http_status != 200 ) {
+				croak "HTTP proxy error: status $http_status";
+			} else {
+				$RawPacket =~ s/^HTTP.*[\r\n]*//;
+			}
 		}
 
 		@Packet =  split(//, $RawPacket);
@@ -1095,6 +1697,18 @@ sub Check_Incoming {
 		for(my $i =0; $i < $PLength; $i++){
 
 			if ($Me->{_FLAP_Bytes_Left} > 0){
+				if($Me->{_FLAP_SubHeader_Bytes_Left} > 0)
+				{
+					push @{$Me->{_FLAP_Sub_Header}}, $Packet[$i];
+					$Me->{_FLAP_SubHeader_Bytes_Left}--;
+					if (!$Me->{_FLAP_SubHeader_Bytes_Left})
+					{
+						my (@HeaderPacket);
+						@HeaderPacket = @{$Me->{_FLAP_Sub_Header}};
+						$Me->{_FLAP_In_progress}{Family_ID}	 = _bytes_to_int(\@HeaderPacket, 0, 2);
+						$Me->{_FLAP_In_progress}{Sub_ID}		= _bytes_to_int(\@HeaderPacket, 2, 2);
+					}
+				}
 				push (@{$Me->{_FLAP_In_progress}{Data_Load}},  $Packet[$i]);
 
 				$Me->{_FLAP_Bytes_Left}--;
@@ -1103,21 +1717,35 @@ sub Check_Incoming {
 					#end the FLAP, and move it to the Queue..
 					push(@{$Me->{_Incoming_Queue}}, $Me->{_FLAP_In_progress});
 					$Me->{_FLAP_In_progress} = undef;
+					$Me->{_FLAP_Header} = [];
+					$Me->{_FLAP_Sub_Header} = [];
 					$Me->{_FLAP_Bytes_Left} = 0;
+					$Me->{_FLAP_SubHeader_Bytes_Left}  = 4;
+					$Me->{_FLAP_Header_Bytes_Left} = 6;
 				}
 				next;
 			}
 
-			#it's a new FLAP..
-			$Packet[$i] == 42 or croak("Recieved Data Missaligned!");
+			#it's a new FLAP.. or part of new....
+			# _print_packet($RawPacket, ());
+				# print ".",$Me->{_FLAP_Header_Bytes_Left};
+			if($Me->{_FLAP_Header_Bytes_Left} > 0)
+			{
+				push @{$Me->{_FLAP_Header}}, $Packet[$i];
+				$Me->{_FLAP_Header_Bytes_Left}--;
+				next if $Me->{_FLAP_Header_Bytes_Left};
+			}  
+			my (@HeaderPacket);
+			@HeaderPacket = @{$Me->{_FLAP_Header}};
+			$HeaderPacket[0] == 42 or croak("Recieved Data Missaligned!");
 
-			$Me->{_FLAP_In_progress}{Channel_ID}	= _bytes_to_int(\@Packet, $i+1, 1);
-			$Me->{_FLAP_In_progress}{Sequence_ID}   = _bytes_to_int(\@Packet, $i+2, 2);
-			$Me->{_FLAP_In_progress}{Data_Size}	 = $Me->{_FLAP_Bytes_Left} = _bytes_to_int(\@Packet, $i+4, 2);
-			$Me->{_FLAP_In_progress}{Family_ID}	 = _bytes_to_int(\@Packet, $i+6, 2);
-			$Me->{_FLAP_In_progress}{Sub_ID}		= _bytes_to_int(\@Packet, $i+8, 2);
+			$Me->{_FLAP_In_progress}{Channel_ID}	= _bytes_to_int(\@HeaderPacket, 1, 1);
+			$Me->{_FLAP_In_progress}{Sequence_ID}   = _bytes_to_int(\@HeaderPacket, 2, 2);
+			$Me->{_FLAP_In_progress}{Data_Size}	 = $Me->{_FLAP_Bytes_Left} = _bytes_to_int(\@HeaderPacket, 4, 2);
+			# $Me->{_FLAP_In_progress}{Family_ID}	 = _bytes_to_int(\@HeaderPacket, 6, 2);
+			# $Me->{_FLAP_In_progress}{Sub_ID}		= _bytes_to_int(\@HeaderPacket, 8, 2);
 
-			$i +=5;
+			# $i--;
 		}
 	}
 }
@@ -1166,6 +1794,9 @@ sub Deal_With_FLAPs {
 			print "Found DisConnection Event, Dealing with it,,\n";
 			&_Disconnection_Nefotiation($Me, $_);
 		}
+		elsif ($_->{Channel_ID} == 5){
+			print ">> im alive! <<\n";
+		}
 		else {
 			#this is an error type  message..
 		}
@@ -1204,7 +1835,7 @@ sub Send_Outgoing {
 
 	#send them all off..
 	if ($Raw_Data) {
-		$Me->{_Socket}->send($Raw_Data);
+		my $res = $Me->{_Socket}->send($Raw_Data);
 	}
 
 	$Me->{_Outgoing_Queue} = [];
@@ -1312,6 +1943,16 @@ sub _str_to_bytes {
   return @ret;
 }
 
+sub _str_to_lnts {
+	my ($string) = (@_);
+	my (@ret);
+	push(@ret, _int_to_endian_bytes(2, length($string)+1));
+	push(@ret, _str_to_bytes($string));
+	push(@ret, _int_to_bytes(1, 0x00));	
+
+	return @ret;
+}
+
 
 # _uin_to_buin(str, add_zero)
 #
@@ -1339,6 +1980,7 @@ sub _uin_to_buin {
 #
 # _bytes_to_str([0x12, 'f', 'o', 'o', '!'], 1, 3) == 'foo'
 
+
 sub _bytes_to_str {
   # thanks to Dimitar Peikov for the fix
   my ($array, $start, $bytes) = @_;
@@ -1346,11 +1988,13 @@ sub _bytes_to_str {
 
   $ret = '';
   for (my $i = $start; $i < $start+$bytes; $i++) {
-	$ret .= $array->[$i] ? chr($array->[$i]) : '';
+	$ret .= ($array->[$i] ne '') ? chr($array->[$i]) : '';
   }
 
   return $ret;
 }
+
+
 
 # print_packet(Header_packet_ref, Body_packet_ref)
 #
@@ -1464,24 +2108,24 @@ sub _Make_SNAC_Header {
 sub _Decode_Tagged_Text {
 	my($String, $Details) = @_;
 	my($Key, $Data, $i);
-
-	my @Entries = split (/</, $String);
-	if ($Entries[4]){
-		chop $Entries[1];
-
-		$Details->{MessageType} = $Entries[1];
-
-		$i = 2;
-	}
-	else {
-		$i = 1;
-	}
-
-	while ($Entries[$i] && $Entries[$i+1]){
-		($Key, $Data) = split(/>/, $Entries[$i]);
-
-		$Details->{$Key} = $Data;
-		$i += 2;
+	$String =~ s/\n/ /g;
+	if($String =~ /<([^>]*)>/i)
+	{
+		$Details->{MessageType} = $1;
+		if($String =~ /<$Details->{MessageType}>(.*)<\/$Details->{MessageType}>?/i)
+		{
+			my $keys = $1;
+			while($keys =~ /<(.*?)>(.*?)<\/.*?>/g)
+			{
+				$Details->{$1} = $2;
+			}
+		} else
+		{
+			$Details->{MessageType} = 'Invalid data!';
+		}
+	} else
+	{
+		$Details->{MessageType} = 'Invalid tagged message';
 	}
 	return ($Details);
 }
@@ -1506,8 +2150,8 @@ sub _Decode_Tagged_Text {
 			Online_Status	   => 0x06,#!
 			Ip_Address		  => 0x0a,#! in 4 byte format..
 			Web_Address		 => 0x0b,#!
-			Unknown02		   => 0x0c,#! (long like 25 bytes..)
-			Unknown03		   => 0x0d,#! ???
+			LANInfo		   => 0x0c,#! (long like 25 bytes..)
+			CapabilityInfo		   => 0x0d,#! ???
 			Time_Online		 => 0x0f #!
 		},
 	4 => {  UIN				 => 0x01,#!
@@ -1537,10 +2181,9 @@ sub _Decode_Tagged_Text {
 			ClientICQNumber	 => 0x19,#!
 			ClientBuildMajor	=> 0x1a #!
 	},
-	2 => {  Status			  => 0x06,#!
-			Unknown00		   => 0x08,#!????
-			Unknown01		   => 0x0c,#!????
-			Unknown00		   => 0x08,#!????
+	2 => {  Status							=> 0x06,#!
+			ErrorCode						=> 0x08,#!????
+			DirectConnnectionInfo			=> 0x0c#!????
 	}
 );
 
@@ -1574,6 +2217,7 @@ sub _Decode_Tagged_Text {
 			5   =>2,
 			6   =>1,
 			10  =>3,
+			12  =>37,
 			15  =>1,
 	},
 	4 => {  8   =>1,
@@ -1676,11 +2320,316 @@ sub _Read_TLV {
 
 1;
 
+
 package main;
 
 no strict;
+use locale;
+
+=head1 NAME
+
+vicq - console ICQ2000 client
+
+=head1 SYNOPSIS
+
+  vicq [-u UIN] [-c config]
+
+=head1 DESCRIPTION
+
+B<vicq> is console icq2000 client, simmilar to micq
+
+=head1 OPTIONS
+
+=over 4
+
+=item B<-u> I<UIN>
+
+When invoked with B<-u> option, vicq expects to read single message
+from B<stdin> and sends it to the specified I<UIN>
+
+=item B<-c> I<config>
+
+Use alternative config instead of ~/.vicq/config
+
+=back
+
+=head1 CONFIGURATION
+
+Config file (~/.vicq/config) consists of several sections described below. 
+Each section starts with header line like this: '[section_name]'. Lines 
+starting with '#' are comments.  You can split entire config in several 
+files using 'include' directive. BUT! You should place whole section in 
+one file, the section header should be placed in the same file.  Example 
+of using include you can find  at http://www.gonzo.kiev.ua/projects/vicq/eg/
+
+=head2 [options]
+
+The B<[options]> section contains configuration variables. Each variable is
+in "name=value" format (case-sensitive).
+
+Configuration variables:
+
+=over 4
+
+=item B<uin> (decimal)
+
+User's UIN
+
+=item B<password> (string)
+
+User's password
+
+=item B<keep_config> (decimal)
+
+If you dont want to save config on exit set this variable to 1: 
+B<keep_config=1>
+
+=item B<encoding> (string)
+
+Valid values 'koi' or 'win', depending on your terminal
+
+=item B<auto_info> (integer)
+
+If not zero, vICQ will request info on every UIN which is not in ContactList automaticaly
+
+=item B<prompt> (string)
+
+Main vICQ prompt template. The following variables will be parsed and may 
+be used in prompt string:
+    %s - by short description of your status
+    %u - by your uin
+
+Example:
+
+ prompt=vICQ(%s)/%uE<gt>
+
+=item B<sms_phonebook> (string)
+
+Path to external file with sms phones in B<[phones]> section format.
+Section tag ('[phones]') is must for this file.
 
 
+=item B<separator_length> (integer)
+
+Length of separator line
+
+=item B<disable_empty_separators> (integer)
+
+if not equal to B<0> disables separator without text
+
+
+=item B<history_entries> (integer)
+
+Number of messages which displays in  user history, if its negative - displays all history
+
+=item B<mode> (string)
+
+Valid values B<normal> or B<silent>. In B<silent> mode change_status events does not appear on screen.
+
+=item B<status> (string)
+
+Initial status. Valid values are:
+
+ Online
+ Free_For_Chat
+ Away
+ Not_Avalible
+ Occupied
+ Do_Not_Disturb
+ Invisible
+
+=item B<colors> (integer)
+
+If this is not B<0>, vicq will use colors.
+
+=item B<colored_history> (integer)
+
+If this is not B<0>, vICQ use colors for history output(You can set 
+you PAGER environment variable to B<less -R> for using color)
+
+=item B<separator_color> (string)
+
+Color of the separator line
+
+=item B<separator_title_color> (string)
+
+Color for the title separator
+
+=item B<nick_color> (string)
+
+Color for highlighting nicknames
+
+=item B<uin_color> (string)
+
+Color for highlighting uins
+
+=item B<status_color> (string)
+
+Color for highlighting status
+
+=item B<message_color> (string)
+
+Message color
+
+=item B<their_history_color> (string)
+
+Color for incoming events in history
+
+=item B<my_history_color> (string)
+
+Color for outgoing events in history
+
+Valid colors are:
+
+ NORMAL
+ YELLOW
+ MAGENTA
+ WHITE
+ BLACK
+ RED
+ GREEN
+ BROWN
+ BLUE
+ CYAN
+ LIGHT_CYAN
+ LIGHT_RED
+ LIGHT_GREEN
+ LIGHT_BLUE
+
+And three text attributes for monochrome terminals:
+
+ BOLD
+ UNDERSCORE
+ REVERSE
+
+=item B<player> (string)
+
+Command for playing sounds (see B<[sounds]> section)
+'%f' in player path will be replaced with filename 
+chosen according to the B<[sounds]> section
+
+Example: 
+
+ player=/path/to/player -f %f -o /dev/dsp 
+
+=item B<browser> (string)
+
+Command for browsing received URLs:
+'%u' in browser command will be replaced with last recieved url
+
+Example:
+
+ browser=/path/to/browser -navigator %u 
+
+=item B<https_proxy> (integer)
+
+If not B<0>, vICQ with work through HTTPS-capable proxy
+
+=item B<proxy_host> (string)
+
+Proxy host
+
+=item B<proxy_port> (decimal)
+
+Proxy port
+
+=item B<proxy_force_https_port> (decimal)
+
+if B<1>, always connect to login.icq.com on port B<443>, regardless 
+of what specified in the reconnection messages
+
+Example of proxy configuration:
+
+ https_proxy=1
+ proxy_port=3128
+ proxy_host=10.25.0.99
+ proxy_force_https_port=1
+
+=item B<log_path>
+
+Directory, which contains history files. 
+
+Example:
+
+ log_path=~/.vicq.log
+
+=item B<log_type>
+
+Specifies method which logs saves. Its a string if its empty - 
+don't log, else calls methods correspondingly chars which appears 
+in strings. Valid chars:
+
+ a - log to <log_path>/vicq.log
+ u - log to <log_path>/<uin>.log
+ s - log status changes
+ n - make newlines between log records
+ l - make symlinks <nick>.log to <uin>.log
+
+Default: log_type=u.
+
+Example:
+
+ log_type=usln
+
+=back
+
+=head2 [aliases]
+
+The B<[aliases]> section contains run-time options. Its format is 'alias=command'.
+
+Example:
+
+ m=msg
+
+=head2 [phones]
+
+The B<[phones]> section contains phonebook for SMS messages in 'nick phone'
+format.  You can use these aliases in 'sms' command
+
+Example:
+
+ squid +380xxxxx
+ ReY +380xxxxxx
+
+
+=head2 [events]
+
+The B<[events]> section contains run-time options. Its format is
+'event command' where 'event' is the type of event (could be
+glob-style wildcard), and 'command' is an external command name
+to be executed when event occurs.  The following variables
+will be parsed and may be used in 'command' string:
+        B<%e> - by type of event
+        B<%u> - by sender's uin
+        B<%n> - by sender's nick
+        B<%t> - by message text (or status value if type of event is 'status_change')
+
+Example:
+
+ * echo 'Event %e from %n(%u) : %t' | mail mymail@myhost.com
+
+(send email to mymail@myhost.com with the full description of the recieved event)
+
+=head2 [sounds]
+
+Section B<[sounds]> is similar to B<[events]> section, allowing you
+to specify audio files played upon various incoming events. Playback
+will be done through the "player" application defined in the B<[option]>
+section, with B<%f> token substituted with the proper filename.
+
+=head2 [contacts]
+
+
+B<[contacts]> section lists UINs, format is the same as in .micqrc:
+
+ UIN Nickname
+
+To add user to visible list add asterisk (B<*>) before UIN (see vicqrc.example).
+If you want be invisible to user add tilde (B<~>) before UIN.
+If you want create alias for UIN/Nick just add aliases in the line below UIN (see vicqrc.example)
+
+
+=cut
 
 #########################################################################################
 ##
@@ -1689,9 +2638,12 @@ no strict;
 #########################################################################################
 
 $ENV{"PERL_RL"} = " o=0";
-my %config;
 my %contacts;
+my %smsphones;
 my $done = 0;
+my $redisplay = 0;
+
+my %opts;
 
 %colors = (
 	LIGHT_RED  => "\033[1;31m",
@@ -1701,44 +2653,255 @@ my $done = 0;
 	MAGENTA => "\033[1;35m",
 	LIGHT_CYAN => "\033[1;36m",
 	WHITE => "\033[1;37m",
-	NORMAL => "\033[0;38m",
+	NORMAL => "\033[0m",
 	BLACK => "\033[0;30m",
 	RED => "\033[0;31m",
 	GREEN => "\033[0;32m",
 	BROWN => "\033[0;33m",
 	BLUE => "\033[0;34m",
-	CYAN => "\033[0;36m"
+	CYAN => "\033[0;36m",
+	BOLD => "\033[1m",
+	UNDERSCORE => "\033[4m",
+	REVERSE => "\033[7m",
+	
 );
-$use_colors = 1;
 
-$last_message_from = 0;
-$last_message_to = 0;
+my $last_message_from = 0;
+my $last_message_to = 0;
+my $last_message_url = '';
+my $requested_uin = 0;
+my $gnu_readline = 0;
+my $term;
+my $ignore_start='';
+my $ignore_stop='';
+my $keepalive=1;
+my $search_info;
 
+# Array of external programs which should be called upon event.
+# Contain references to two-element lists where first part is regular
+# expression which match event type and second one is command.
+# Command could contain specifiers %e, %u %n and %t which are replaced
+# with event type, uin, nick and text respectively. For status change
+# event %t is new status of remote user.
+@ExternalHooks=();
+@SoundHooks=();
+# Command aliases to be preserved on write_config
+@Aliases=();
+my %subtopics = (
+	'status' => ['online','away','na','dnd','occ','ffc','inv'],
+	'messages' => ['msg','r','a','sms','auth','url'],
+	'contacts' => ['add','togvis','history','finger','w','e'],
+	'misc' => ['!','help','save','info','silent','normal','view','set','search','wpset']
+);
+
+my %descriptions = 
+(
+	'status' => 'Status change commands',
+	'messages' => 'commands for message handling',
+	'contacts' => 'contact list managing',
+	'misc' => 'miscellaneous commands'
+);
 
 %helps = (
-	'' => "Command list:\nmsg\nadd\nsubmit\ntogvis\ninv\nna\ndnd\nonline\naway\nocc\nauth\nw\ne\nquit\n?\nhelp",
-	'msg' =>  "Format: msg [UIN | nickname][/message]",
-	'add' =>  "Format: add UIN nickname",
-	'submit' => "debug command",
-	'togvis' => "Format: togvis [UIN | nickname]",
-	'inv' => "Format: inv\nChange status to invisible",
-	'na' =>  "Format: na\nChange status to Not Available",
-	'dnd' =>  "Format: dnd\nChange status to Do Not Disturb",
-	'online' => "Format: online\nChange status to Online",
-	'away' => "Format: away\nChange status to Away",
-	'occ' =>  "Format: occ\nChange status to Occupied",
-	'auth' => "Format: auth [UIN | nickname]\nGive authorization",
-	'w' =>  "Format: w\nPrints contactlist",
-	'e' =>  "Format: e\nPrints contactlist, but not \"Offline\"",
-	'quit' =>  "Format: quit\nThis command allows you to do something else\nbehind ICQ",
-	'?' => "Format: help [cmd]\nShow help on command",
-	'help' => "Format: help [cmd]\nShow help on command"
+	'msg' =>  "[UIN | nickname][/message]",
+	'sms' =>  "phonenumber[/message]",
+	'add' =>  "UIN nickname",
+	'url' => "[UIN | nickname]",
+	'view' => " \nview last received URL",
+	'silent' => 'Changes mode to silent(no status messages',
+	'normal' => 'Changes mode to normal(status messages enabled)',
+	'submit' => "\n(debug command)",
+	'info' => "[UIN | nickname]",
+	'togvis' => "[UIN | nickname]\nadds/removes user to/from visible list",
+	'toginvis' => "[UIN | nickname]\nadds/removes user to/from invisible list",
+	'finger'=>  "[UIN | nickname]\n gives information about person on your contact list\n",
+	'inv' => "\nChange status to invisible",
+	'na' =>  "\nChange status to Not Available",
+	'dnd' =>  "\nChange status to Do Not Disturb",
+	'online' => "\nChange status to Online",
+	'away' => "\nChange status to Away",
+	'occ' =>  "\nChange status to Occupied",
+	'ffc' =>  "\nChange status to Free For Chat",
+	'auth' => "[UIN | nickname]\nGive authorization",
+	'r' => "Reply to last received message",
+	'a' => "Send a message to the last person you sent a message",
+	'w' =>  "\nPrints contactlist",
+	'e' =>  "\nPrints contactlist, but not \"Offline\"",
+	'history' => "\nhistory UIN|nick [count] shows last 'count' history\nentries for specified UIN. By default count=10",
+	'quit' =>  "\nThis command allows you to do something else\nbehind ICQ",
+	'help' => "[cmd]\nShow help on command",
+	'!' => "OS command\nNote the space after exclamation point",
+	'save' => "save config",
+	'set' => "[key = ] [value]\nshow/change config options",
+	'search' => 'search email@host.domain - Searches for a ICQ user.',
+	'wpset' => 'Set basic White Pages info (experimental)'
 );
 
+=head1 INTERACTIVE OPERATIONS
 
+
+=head2 Messages handling
+
+=over 4
+
+=item B<msg> I<nick|UIN [/msg]>
+
+sends an instant ICQ message
+
+=item B<sms> I<nick|phone [/msg]>
+
+sends SMS to specified person
+
+=item B<r>
+
+replies to last received message
+
+=item B<a>
+
+sends a message to the last person you sent a message
+
+=item B<auth> I<nick | UIN>
+
+sends an authorization to specified UIN
+
+=item B<url> I<nick | UIN> [URL]
+
+sends an URL to specified person
+
+=back
+
+=head2 Status managment
+
+=over 4
+
+=item B<online>
+
+changes status to 'Online'
+
+=item B<inv>
+
+changes status to 'Invisible'
+
+=item B<away>
+
+changes status to 'Away'
+
+=item B<na>
+
+changes status to 'Not availabe'
+
+=item B<occ>
+
+changes status to 'Occupied'
+
+=item B<dnd>
+
+changes status to 'Do Not Disturb'
+
+=item B<ffc>
+
+changes status to 'Free for chat'
+
+=back
+
+=head2 Contact list managment
+
+=over 4
+
+=item B<add> I<UIN nick>
+
+adds I<UIN> as I<nick> to contact list
+
+=item B<w>
+
+displays the current status of every person in your contact list
+
+=item B<e>
+
+displays the current status of every online person in your contact list
+
+=item B<togvis> I<UIN | nick>
+
+adds/removes user to/from visible list
+
+=item B<toginvis> I<UIN | nick>
+
+adds/removes user to/from invisible list
+
+
+
+=item B<history> I<UIN | nick [count]> 
+
+displays last I<count> entries of the user's history. If I<count> is
+negative shoes all entries
+
+=item B<finger> I<UIN | nick>
+
+displays user's UIN, nick, current status, IP(and resolved host if 
+available), dirrect connection info, and client version
+
+=back
+
+=head2 Miscellaneous commands
+
+=over 4
+
+=item B<help> I<command>
+
+displays help on command
+
+=item B<!> I<OS command>
+
+execute external command
+
+=item B<save>
+
+saves config
+
+=item B<info> I<UIN | nick>
+
+sends user info request
+
+=item B<search> I<email@host.domain>
+
+searches for ICQ user
+
+=item B<silent>
+
+toggle to silent mode - change status events does not displays
+
+=item B<normal>
+
+toggle to normal mode - change status events displays
+
+=item B<view>
+
+open last recieved URL with I<browser> command
+
+=item B<set> I<[key[=value]]>
+
+shows/sets config variables values
+
+=item B<wpset> 
+
+sets basic White Pages info 
+
+=back
+
+=head2 Message editing
+
+Input B<.> in the empty line to end message or B<#> to cancel message
+
+=head1 AUTHOR
+
+Alexander Timoshenko E<lt>gonzo@ukrweb.netE<gt>
+
+=cut
 
 %_command_handlers = (
-	'msg' => sub {
+
+
+    'msg' => sub {
 				my @args = @_;
 				my $uin = '';
 				my $msg = '';
@@ -1748,7 +2911,7 @@ $last_message_to = 0;
 					my $line = join ' ',@args;
 					if($line =~ /^(.*?)\/(.*)$/)
 					{
-						$msg = encode($2);
+						$msg = $2;
 						$uin = GetUIN($1);
 						if(!$uin) { return "No such nick"; }
 					}
@@ -1757,91 +2920,150 @@ $last_message_to = 0;
     				$uin = GetUIN($args[0]);
 					if(!$uin) { return "No such nick"; }
 					print "Composing message to $args[0]:\n";
-					$msg = encode(read_message());
+					$msg = read_message();
 				}
-				$last_message_to = $uin;
-				my %details = ( uin => $uin,
-								MessageType => 'text',
-								text =>  $msg
-				);
-				$icq->Send_Command("Cmd_Send_Message", \%details);
+				if($msg eq '') { return "Message canceled"; }
+				send_text_message($uin,$msg);
 				my $nick = GetContact($uin);
 				$nick = color_nick($nick);
-				return "You send instant message to $nick";
+				return "You sent instant message to $nick";
 			},
-	'a' => sub {
+	'value' => sub {
+		my @args = @_;
+		return "$args[0] = $config{$args[0]}";
+
+	},
+
+	'search' => sub {
+				return search_by_email(@_);
+			},
+	# 'info' => sub { 
+				# get_info(@_);
+				# return ''; #"Info request for $uin sent";;
+		# },
+	'info' => sub {
+					get_wp_info(@_);
+					return '';
+				},
+	'wpset' => sub {
+				set_my_info();
+				return ''; #"Info request for $uin sent";;
+		},
+	'history' => sub {
 				my @args = @_;
-				my $uin = $last_message_to;
+				my $uin = GetUIN($args[0]);
+				my $count = $args[1];
+				if(!$uin && $config{log_type}=~/u/)
+				{
+					return 'No such nick';
+				}
+				if(($count !~ /^\d+$/) && $count)
+				{
+					return 'Invalid messages count';
+				}
+				if(!$count) { $count = $config{history_entries}; }
+				$count = 20 unless $count;
+				history($uin, $count);
+				return '';
+		},
+	'url' => sub {
+				my @args = @_;
+				my $uin = '';
 				my $msg = '';
 				my ($details);
-				if(!$uin)
-				{
-					return 'You didn\'t send messages yet';
-				}
-
+    			$uin = GetUIN($args[0]);
+				if(!$uin) { return "No such nick"; }
 				my $nick = GetContact($uin);
 				$nick = color_nick($nick);
-				if($#args>-1)
+				print "Composing URL message to $nick:\n";
+				$url = $args[1];
+				$url = read_url() unless $url;
+				$desc = read_description();
+				send_url_message($uin,$url,$desc);
+				return "You sent URL message to $nick";
+			},
+	'view' => sub {
+				if($last_message_url ne '')
 				{
-					$msg = encode(join ' ',@args);
+					my$cmd = $config{browser};
+					my $urlparam = $last_message_url;
+					$urlparam =~ s/'/'\''/g;
+					$cmd =~ s/\%u/'$last_message_url'/g;
+					system $cmd;
+					return '';
+				}
+				return 'No URL for this moment';
+			},
+	'silent' => sub { 
+				$config{mode} = 'silent';
+				return 'Status change messages disabed';
+			},
+	'normal' => sub { 
+				$config{mode} = 'normal'; 
+				return 'Status change messages enabled';
+			},
+	'sms' => sub {
+				my @args = @_;
+				my $target = '';
+				my $msg = '';
+				my ($details);
+				if($args[0]=~/\//)
+				{
+					my $line = join ' ',@args;
+					if($line =~ /^(\S+)\s*\/\s*(.*)$/)
+					{
+						$msg = $2;
+						$target = $1;
+					}
 				} else
 				{
-					print "Composing message to $nick:\n";
-					$msg = encode(read_message());
+    					$target = $args[0];
 				}
-				$last_message_to = $uin;
-				my %details = ( uin => $uin,
-								MessageType => 'text',
-								text =>  $msg
-				);
-				$icq->Send_Command("Cmd_Send_Message", \%details);
+				if ($target !~ /^[-()+0-9]+$/) {
+					my $phone;
+					if ($phone = GetPhone($target)) {
+						print "${target}'s phone number is $phone\n";
+						$target = $phone;
+					} else {
+						return "Can't find ${target}'s phone number in your phonebook";
+					}
+				}
+				if(!$target) { return "invalid number"; }
+				unless ($msg) {
+					print "Composing message to $args[0]:\n";
+					$msg = read_message();
+				}
 
-				return "You send instant message to $nick";
+				$target =~ s/[-()]//g;
+				$last_message_to = $uin;
+				my %details = ( SMS_Dest_Number  => $target,
+								MessageType => 'SMS',
+								text =>  encode($msg),
+								delivery_receipt=>'Yes'								
+								
+				);
+				$icq->Send_Command("Cmd_Srv_Message", \%details);
+				log_outgoing_event("sms.$target","Send SMS to $target\n$msg\n");
+				return "You sent SMS message to $target\n";
 			},
+	'a' => sub { return do_reply ( $last_message_to, @_); },
+	'r' => sub { return do_reply ( $last_message_from, @_); },
 	'reg' => sub {
 				return Register();
 				},
-	'r' => sub {
-				my @args = @_;
-				my $uin = $last_message_from;
-				my $msg = '';
-				my ($details);
-				if(!$uin)
-				{
-					return 'You didn\'t send messages yet';
-				}
-				my $nick = GetContact($uin);
-				$nick = color_nick($nick);
-				if($#args>-1)
-				{
-					$msg = encode(join ' ',@args);
-				} else
-				{
-					print "Composing message to $nick:\n";
-					$msg = encode(read_message());
-				}
-				$last_message_to = $uin;
-				my %details = ( uin => $uin,
-								MessageType => 'text',
-								text =>  $msg
-				);
-				$icq->Send_Command("Cmd_Send_Message", \%details);
-
-				my $nick = GetContact($uin);
-				$nick = color_nick($nick);
-				return "You send instant message to $nick";
-			},
-
 
 	'add' => sub {
 				my @args = @_;
 				my $uin = $args[0];
 				my $contact = $args[1];
 				$contacts{$uin} = $contact;
+				$prefs{$uin}{status} = 'Offline';
+				$prefs{$uin}{ip} = 'x.x.x.x';
 				my ($details);
 				my @uins = ($uin);
 				$details->{ContactList} = \@uins;
 				$icq->Send_Command("Cmd_Add_ContactList", $details);
+				parse_command('submit');
 				return "You added $uin($contact) to ContactList";
 			},
 	'submit' => sub {
@@ -1856,74 +3078,102 @@ $last_message_to = 0;
 				return '';
 			},
 	'togvis' => sub {
-				my ($details);
 				my @args=@_;
 				my $uin = GetUIN($args[0]);
 				my @uins = ($uin);
 				if($prefs{$uin}{visible} eq 'yes')
 				{
+					remove_from_visible_list(\@uins);
 					$prefs{$uin}{visible} = 'no';
-					$details->{InVisibleList} = \@uins;
-					$icq->Send_Command("Cmd_BOS_Add_InVisibleList", $details);
 				} else
 				{
 					$prefs{$uin}{visible} = 'yes';
-					$details->{VisibleList} = \@uins;
-					$icq->Send_Command("Cmd_BOS_Add_VisibleList", $details);
+					$prefs{$uin}{invisible} = 'no';
+					add_to_visible_list(\@uins);
 				}
-			
 				return '';
 			},
+	'toginvis' => sub {
+				my @args=@_;
+				my $uin = GetUIN($args[0]);
+				my @uins = ($uin);
+				if($prefs{$uin}{invisible} eq 'yes')
+				{
+					remove_from_invisible_list(\@uins);
+					$prefs{$uin}{invisible} = 'no';
+				} else
+				{
+					$prefs{$uin}{invisible} = 'yes';
+					$prefs{$uin}{visible} = 'no';
+					add_to_invisible_list(\@uins);
+				}
+				return '';
+			},
+
 	'inv' => sub {
-				my ($details);
-				$details->{Status} = "Invisible";
-				$icq->Send_Command("Cmd_GSC_Set_Status", $details);
+				set_status("Invisible");
 				return $details->{Status};
 			},
 	'na' => sub {
-				my ($details);
-				$details->{Status} = "Not_Avalible";
-				$icq->Send_Command("Cmd_GSC_Set_Status", $details);
+				set_status("Not_Available");
 				return $details->{Status};
 			},
 	'dnd' => sub {
-				my ($details);
-				$details->{Status} = "Do_Not_Disturb";
-				$icq->Send_Command("Cmd_GSC_Set_Status", $details);
+				set_status("Do_Not_Disturb");
 				return $details->{Status};
 			},
 	'online' => sub {
-				my ($details);
-				$details->{Status} = "Online";
-				$icq->Send_Command("Cmd_GSC_Set_Status", $details);
+				set_status("Online");
 				return $details->{Status};
 			},
 	'away' => sub {
-				my ($details);
-				$details->{Status} = "Away";
-				$icq->Send_Command("Cmd_GSC_Set_Status", $details);
+				set_status("Away");
 				return $details->{Status};
 			},
 	'occ' => sub {
-				my ($details);
-				$details->{Status} = "Occupied";
-				$icq->Send_Command("Cmd_GSC_Set_Status", $details);
+				set_status("Occupied");
 				return $details->{Status};
 			},
+	'ffc' => sub {
+				set_status("Free_For_Chat");
+				return $details->{Status};
+			},
+
 	'auth' => sub {
 				my ($details);
-        		$details->{uin} = GetUIN(@_[0]);
+        		$details->{uin} = GetUIN($_[0]);
 				$last_message_to = $details->{uin};
         		$icq->Send_Command("Cmd_Authorize", $details);
 				return "Authorization sent to $details->{uin}";
 			},
+	'finger' => sub { 
+	                  my $uin=GetUIN($_[0]);
+	                  if (! exists $prefs{$uin}) {
+			      return color_nick($_[0]). " is not on your contact list\n";
+			  }
+			  my $hostname = gethostbyaddr pack("C4", split '\.', $prefs{$uin}{ip}), 2;
+			  return color_nick($_[0]). "(".color_nick($uin).") ".
+			  			color_status($prefs{$uin}{status}) . 
+					"\nIP address  : ".
+			    		color_status($prefs{$uin}{ip}).
+					"\nHost        : " . 
+						color_status($hostname) . 
+					"\nDC info     : " . 
+						color_status($prefs{$uin}{dc_ip}) . 
+					':' . 
+						color_status($prefs{$uin}{dc_port}) . 
+					"\nICQ version : " . 
+						color_status(GetVersion($prefs{$uin}{icq_version}));
+
+		    }	    ,
 	'w' => sub {
 				separator('Offline users');
-				foreach (keys %contacts)
+				foreach ( sort { GetContact($a) cmp GetContact($b) } keys %contacts)
 				{
 					my $ip = sprintf "%15s",$prefs{$_}{ip};
 					my $status = $prefs{$_}{status};
 					if($status ne 'Offline') { next; }
+					$status = color_status($status);
 					my $uin = GetContact($_);
 					if($prefs{$_}{visible} eq 'yes')
 					{
@@ -1934,35 +3184,45 @@ $last_message_to = 0;
 					print "$uin [$ip] ($status)\n";
 				}
 				separator('Online users');
-				foreach (keys %contacts)
+				foreach ( sort { GetContact($a) cmp GetContact($b) } keys %contacts)
 				{
 					my $ip = sprintf "%15s",$prefs{$_}{ip};
 					my $status = $prefs{$_}{status};
 					if($status eq 'Offline') { next; }
+					$status = color_status($status);
 					my $uin = GetContact($_);
 					if($prefs{$_}{visible} eq 'yes')
 					{
 						$uin = "*$uin";
 					}
+					elsif($prefs{$_}{invisible} eq 'yes')
+					{
+						$uin = "~$uin";
+					}
+
 					$uin = sprintf "%20s",$uin;
 					$uin = $colors{$config{nick_color}} . $uin . $colors{NORMAL};
 					print "$uin [$ip] ($status)\n";
 				}
-
 				separator();
 				return '';
 			},
 	'e' => sub {
 				separator('Online users');
-				foreach (keys %contacts)
+				foreach (sort { GetContact($a) cmp GetContact($b) } keys %contacts)
 				{
 					my $ip = sprintf "%15s",$prefs{$_}{ip};
 					my $status = $prefs{$_}{status};
 					if($status eq 'Offline') { next; }
+					$status = color_status($status);
 					my $uin = GetContact($_);
 					if($prefs{$_}{visible} eq 'yes')
 					{
 						$uin = "*$uin";
+					}
+					elsif($prefs{$_}{invisible} eq 'yes')
+					{
+						$uin = "~$uin";
 					}
 					$uin = sprintf "%20s",$uin;
 					$uin = $colors{$config{nick_color}} . $uin . $colors{NORMAL};
@@ -1977,16 +3237,35 @@ $last_message_to = 0;
 				$done = 1;
 				return "ZZZZZZZZZZZAAAAAAAAAPPPPPPPPP!!!!!";
 			},
-	'?' => sub {
-				my $cmd = shift;
-				help($cmd);
-				return '';
-			},
 	'help' => sub {
 				my $cmd = shift;
 				help($cmd);
 				return '';
-			}
+			},
+	'!' => sub {
+	       system(join(" ",@_));
+	       return '';
+	   },
+	'save' => sub {
+	       &save_config;
+	       return "";
+	},
+	'set' => sub {
+	   my $str=join ('',@_);
+	   $str=~s/^\s+//;
+	   $str=~s/\s+$//;
+	   if ($str eq ''){
+	      foreach (sort keys %config) { print "$_ = $config{$_}\n"; }
+	   }elsif($str =~ /(\w+)\s*=\s*(\w*)/){
+	      $config{$1}=$2;
+	      print "$1 is set to $2\n";
+	   }elsif (exists $config{$str}){
+	      print "$str=$config{$str}\n";
+	   }else{
+	      print "can't find key '$str'\n";
+	   }
+	   return "";
+	}
 );
 
 
@@ -1998,12 +3277,13 @@ $last_message_to = 0;
 
 # print Register(),"\n";
 # exit 0;
-
+getopts("dDu:c:",\%opts);
+my $config_file = expand_file($opts{'c'} || '~/.vicq/config');
 &parse_config;
 
 $icq = Net::ICQ2000->new($config{uin}, $config{password},"1"); #the 1 tells the module to auto connect
 $icq->{_Status} = $config{status};
-
+if($opts{'d'}) { $icq->{_Debug} = 1;}
 foreach (keys %contacts)
 {
 	push (@{$icq->{_Auto_Login_Contact_List}}, $_);
@@ -2011,6 +3291,28 @@ foreach (keys %contacts)
 foreach (keys %contacts)
 {
 	push (@{$icq->{_Auto_Login_Visible_List}}, $_) if ($prefs{$_}{visible} eq 'yes');
+	push (@{$icq->{_Auto_Login_Invisible_List}}, $_) if ($prefs{$_}{invisible} eq 'yes');
+}
+
+if($opts{'u'})
+{
+	while(!$icq->{_LoggedIn})
+	{
+		$icq->Execute_Once();
+	}
+	my $uin = $opts{'u'};
+	my $msg = '';
+	while(<>)
+	{
+		$msg .= $_;
+	}
+	my %details = ( uin => $uin,
+					MessageType => 'text',
+					text =>  $msg
+					);
+	$icq->Send_Command("Cmd_Send_Message", \%details);
+	$icq->Execute_Once();
+	exit 0;
 }
 
 $icq->Add_Hook("Srv_Mes_Received", \&RecMessage);
@@ -2018,7 +3320,8 @@ $icq->Add_Hook("Srv_GSC_User_Info", \&DisplayDetails);
 $icq->Add_Hook("Srv_Srv_Message", \&SrvMessage);
 $icq->Add_Hook("Srv_GSC_MOTD", \&MOTD);
 $icq->Add_Hook("Srv_BLM_Contact_Online", \&User_Online);
-$icq->Add_Hook("Srv_BLM_Contact_Offline", \&DisplayDetails);
+$icq->Add_Hook("Srv_BLM_Contact_Offline", \&User_Offline);
+$icq->Add_Hook("Srv_Password_Missmatch", \&Password_Error);
 my $message = 0;
 
 while(!$icq->{_LoggedIn})
@@ -2029,23 +3332,47 @@ while(!$icq->{_LoggedIn})
 $SIG{INT} = \&disconnect;
 $SIG{ALRM} = \&do_network;
 alarm 1;
-$| = 1;
-
-$term = new Term::ReadLine 'vICQ v0.1';
-$prompt = "vICQ>";
-$OUT = $term->OUT || STDOUT;
-while (!$done &&  (defined ($_ = $term->readline($prompt)))) 
+eval 
 {
-	$res = parse_command($_), "\n";
+	$term = new Term::ReadLine::Gnu 'vICQ v0.2';
+	$gnu_readline = 1;
+	$ignore_start = Term::ReadLine::Gnu::RL_PROMPT_START_IGNORE();
+	$ignore_stop = Term::ReadLine::Gnu::RL_PROMPT_END_IGNORE();
+	my $attribs=$term->Attribs;
+	$attribs->{completion_function}=
+	sub {
+ 
+        my ($text, $line, $start, $end) = @_;
+        return (keys %helps) if (substr($line, 0, $start) =~ /^\s*$/);
+		return (grep(/^$text/i,(values %contacts, keys %contacts)));
+	};
+
+	print "Using GNU readline\n";
+};
+if ($@) 
+{
+	$term = new Term::ReadLine 'vICQ v0.2';
+	print "Using simplified readline. Install Term::ReadLine::GNU to get more service\n";
+}
+
+undef $@;
+
+if ($ENV{TERM}=~/^xterm*/ || $ENV{TERM} eq 'rxvt') {
+   print "\033]0;vICQ\a";
+}    
+
+
+while (!$done &&  (defined ($_ = $term->readline(make_prompt($config{prompt}))))) 
+{
+	$res = parse_command($_);
 	warn $@ if $@;
 	if($res) 
 	{
-		print $OUT $res, "\n" unless $@;
+		print $res, "\n" unless $@;
 	}
-	$term->addhistory($_) if /\S/;
 }
 
-&save_config;
+&save_config unless ($config{keep_config});
 
 
 
@@ -2059,96 +3386,348 @@ while (!$done &&  (defined ($_ = $term->readline($prompt))))
 sub help
 {
 	my $cmd = shift;
-	print $helps{$cmd};
-	print "\n";
+	# my @subnames = keys %subtopics;
+	if(in_array($cmd, [keys %subtopics]))
+	{
+		print "Section: $cmd, use help cmd for command help\n";
+		foreach (@{$subtopics{lc $cmd}})
+		{
+			print "$_\n";
+		}
+	}
+	elsif ($cmd) {
+	   if (exists $helps{$cmd}) {
+	     printf "Format: %s %s\n",$cmd ,$helps{$cmd} ;
+	   } else {
+	     print "Undefined command '$cmd'\n";
+	   }  
+	} else {
+		print "Use help [section] for section command list\n";
+		foreach (keys %subtopics)
+		{
+			print "$_ : $descriptions{$_}\n";
+		}
+    }  
 }
+
+sub save_options
+{
+	my $file = shift;
+	$file = expand_file('~/.vicq/config') if($file eq '');
+	open CONF,"< " . $file or die "Cann't read config file $file";
+	my$old = $/;
+	undef $/;
+	$textconf = <CONF>;
+	$textconf .= "\n";
+	close CONF;
+	$textconf .= "[options]\n" if($textconf !~ /\[options\]/);
+	$/ = $old;
+	foreach $name (keys %config)
+	{
+		if(!($textconf =~ s/(\n[ \t]*$name[ \t]*=[ \t]*[^\n]*?\n)/\n$name=$config{$name}\n/i))
+		{
+			$textconf =~ s/(\[options\][ \t]*?)\n/$1\n$name=$config{$name}\n/i  unless $name eq 'password' && !$save_password;
+		}
+	}
+	$textconf =~ s/\n+$/\n/;
+	open CONF,">" . $file or die  "Cann't write config file $file";
+	print CONF $textconf;
+	close CONF;
+
+}
+
+sub save_contacts
+{
+	my $file = shift;
+	$file = expand_file('~/.vicq/config') if($file eq '');
+	open CONF,"< " . $file or die "Cann't read config file $file";
+	my$old = $/;
+	undef $/;
+	$textconf = <CONF>;
+	$textconf .= "\n";
+	close CONF;
+	$textconf .= "[contacts]\n" if($textconf !~ /\[contacts\]/);
+
+	foreach $uin (keys %contacts)
+	{
+		my $nuin = $uin;
+		$nuin = '*' . $uin if($prefs{$uin}{visible} eq 'yes');
+		if(!($textconf =~ s/\n[ \t]*\*?$uin[ \t]+(.*?)\n/\n$nuin $contacts{$uin}\n/i))
+		{
+			$textconf =~ s/(\[contacts\][ \t]*?)\n/$1\n$nuin $contacts{$uin}\n/i;
+		} 
+		
+	}
+	$/ = $old;
+	$textconf =~ s/\n+$/\n/;
+	open CONF,">" . $file or die  "Cann't write config file $file";
+	print CONF $textconf;
+	close CONF;
+}
+
+
 
 sub save_config
 {
 	my $section = '';
 	print "\n";
 	print "Writing config...\n";
-	my $home = $ENV{HOME};
-	open CONF,">$home/.vicqrc" or die "Cann't write config file ~/.vicqrc";
-	print CONF "[options]\n";
-	foreach (keys %config)
+	if(!-e $ENV{'HOME'} . "/.vicq")
 	{
-		print CONF "$_=$config{$_}\n";
+		mkdir $ENV{'HOME'} . "/.vicq",0755;
 	}
-	print CONF "[contacts]\n";
-	foreach (keys %contacts)
-	{
-		$uin = $_;
-		$uin = '*' . $_ if($prefs{$_}{visible} eq 'yes');
-		
-		print CONF "$uin $contacts{$_}\n";
-	}
+	save_options($files{options});
+	save_contacts($files{contacts});
 	return '';
 }
 
 
-
-sub parse_config
+sub expand_file
 {
+	my $file = shift;
+	$file =~ s/^~(\w+)?/$1 ? (getpwnam($1))[7] : $ENV{HOME}/eg;
+	return $file;
+}
+
+sub parse_file
+{
+	my $file = shift;
 	my $section = '';
-	print "Reading config...\n";
-	my $home = $ENV{HOME};
-	if(! -e  "$home/.vicq.log")
+	my $uin;
+	$file = expand_file($file);
+	if($file !~ /^\//)
 	{
-		mkdir "$home/.vicq.log",0700 or die "Can't create dir $home/.vicq";
+		$file = "$ENV{HOME}/.vicq/$file";
 	}
-	open CONF,"< $home/.vicqrc" or die "Cann't read config file ~/.vicqrc";
-	while(<CONF>)
+	if( -e "$file")
+	{
+		open CONF,"< $file" or die "Cann't read config file $file";
+	} else
+	{
+		print "Cann't open config file $file\n";
+		return;
+	}
+	my @lines = <CONF>;
+	foreach (@lines)
 	{
 		chomp;
 		s/^\s+//g;
 		s/\s+$//g;
 		if($_ eq '') { next; }
+		# skip comments;
+		if(/^#/) {next;}
+		if(/^include\s+(.*)/i)
+		{
+			parse_file($1);
+			next;
+		}
 		if(/^\[(\w+)\]$/)
 		{
-			$section = $1;
+			$section = lc($1);
+			$files{$section} = $file;
 		} 
+		elsif($section eq 'phones')
+		{
+      		$smsphones{$1} = $2 if /^\s*(\w+)\s+(.+)/;
+		}
 		elsif($section eq 'options')
 		{
-			($name,$value) = split /=/;
-			$config{$name} = $value;
+            if (/([^ \t=]+?)\s*=\s*(.*)/) {
+				my $key=lc($1);
+				$config{$key} = $2;
+				if ($key eq 'password') {
+			   	$save_password=1;
+		       }   
+			}
 		}
 		elsif($section eq 'contacts')
 		{
-			if(/^(\*?\d+)\s+(.*)$/)
+			if(/^([\*~]?\d+)\s+(.*)$/)
 			{
 				$uin = $1;
 				$name = $2;
-				if($uin =~ /^\*(\d+)/)
+				if($uin =~ /^\d+/)
+				{
+					$prefs{$uin}{visible} = 'no';
+					$prefs{$uin}{invisible} = 'no';
+				}
+				elsif($uin =~ /^\*(\d+)/)
 				{
 					$uin = $1;
 					$prefs{$uin}{visible} = 'yes';
+					$prefs{$uin}{invisible} = 'no';
 					
-				} else
+				} 
+				elsif ($uin =~ /^~(\d+)/)
 				{
+					$uin = $1;
+					$prefs{$uin}{invisible} = 'yes';
 					$prefs{$uin}{visible} = 'no';
 				}
 				$contacts{$uin} = $name;
 				$prefs{$uin}{ip} = 'x.x.x.x';
 				$prefs{$uin}{status} = 'Offline';
+			} else
+			{
+				if($_ ne '')
+				{
+					push (@{$contacts{$uin}{aliases}},$_);
+				}
 			}
 			
 	
 
 		}
+		elsif ($section eq 'events') 
+		{
+		   if (/^\s*(\S+)\s+(.*$)/) {
+		       my $event = $1;
+		       my $command = $2;
+		       my $type = $event;
+		       # convert glob-style notation to regexp
+		       $type=~s/([\\.\$])/\\$1/g;
+		       $type=~s/\?/\./g;
+		       $type=~s/\*/\.*/g;
+		       push @ExternalHooks,{'eventspec'=>$event,
+		       'type'=>$type,'command'=>$command};
+		       
+		    }   
+		}
+		elsif ($section eq 'sounds') {
+		   if (/^\s*(\S+)\s+(.*$)/) {
+		       my $event = $1;
+		       my $file = $2;
+		       my $type = $event;
+		       # convert glob-style notation to regexp
+		       $type=~s/([\\.\$])/\\$1/g;
+		       $type=~s/\?/\./g;
+		       $type=~s/\*/\.*/g;
+		       push @SoundHooks,{'eventspec'=>$event,
+		       'type'=>$type,'file'=>$file};
+		       
+		    }  
+		} elsif ($section eq 'aliases') {
+                   if (/([^ \t=]+)\s*=\s*([^ \t=]+)/) {
+		      my $new =$1;
+		      my $old = $2;
+		      push @Aliases, $_; 
+		      die "Cannot alias nonexistent command $old\n"
+		        if ! exists $_command_handlers{$old};
+	              $helps{$new} = $helps{$old};		
+		      $_command_handlers{$new} = $_command_handlers{$old};
+		  } else {
+		     die "Invalid alias syntax\n"; 
+		 }   
+		} else {
+		   die "Invalid section in config file($file): $section\n";
+	       }   
 	}
-	if($use_colors)
+}
+
+
+sub parse_config
+{
+	my $section = '';
+	my $uin;
+	print "Reading config...";
+	# my $home = $ENV{HOME};
+	if(!-e $ENV{'HOME'} . "/.vicq")
 	{
-		$config{separator_color} = 'BLUE';
-		$config{uin_color} = 'MAGENTA';
-		$config{nick_color} = 'MAGENTA';
-		$config{message_color} = 'LIGHT_BLUE';
+		mkdir $ENV{'HOME'} . "/.vicq",0755;
+	}
+
+	if( -e $config_file)
+	{
+		parse_file($config_file);
+	} else
+	{
+		open CONF,"> $config_file" or die "Cann't create config file $config_file";
+	}
+	print "Done\n";
+	if($config{colors})
+	{
+		$config{separator_color} = 'BLUE' if ($config{separator_color} eq '');
+		$config{separator_title_color} = 'CYAN' if ($config{separator_title_color} eq '');
+		$config{message_color} = 'LIGHT_BLUE' if ($config{message_color} eq '');
+		$config{uin_color} = 'MAGENTA' if ($config{uin_color} eq '');
+		$config{nick_color} = 'MAGENTA' if ($config{nick_color} eq '');
+		$config{status_color} = 'YELLOW' if ($config{status_color} eq '');
+	}
+	if(! $config{separator_length})
+	{
 		$config{separator_length} = 70;
+	}
+	unless($config{mode} eq 'silent')
+	{
+		$config{mode} = 'normal';
 	}
 
 	if($config{encoding} ne 'koi')
 	{
 		$config{encoding} = 'win';
+	}
+
+	if ($config{uin} eq '')
+	{
+		print "UIN #:";
+		$_ = <>;
+		chop;
+		$config{uin} = $_;
+	}
+	&parse_sms_phonebook if $config{sms_phonebook};
+
+	if ($config{password} eq '')
+	{
+		system "stty -echo";
+		print "Password:";
+		$_ = <>;
+		chop;
+		$config{password} = $_;
+		system "stty echo";
+		print "\n";
+	}
+	$config{prompt} = "vICQ>" unless $config{'prompt'};
+	
+	unless (defined $config{log_type}){
+	   $config{log_type}='u';
+	}elsif ($config{log_type}){
+	   $config{log_type}.='u' unless ($config{log_type}=~/a/ || $config{log_type}=~/u/);
+	}
+	
+	if ($config{log_path}){
+	   $config{log_path} = expand_file($config{log_path});
+	   $config{log_path}.='/' unless $config{log_path}=~/\/$/;
+	}else{
+	   $config{log_path}="$ENV{HOME}/.vicq/history/";
+        }
+	unless( -e $config{log_path} || $config{log_path} eq $ENV{HOME})
+	{
+		mkdir "$config{log_path}",0700 or die "Can't create dir $config{log_path}.$!";
+	}
+
+	$config{disable_empty_separators}=0 unless defined $config{disable_empty_separators};
+}
+
+#
+# sub parse_sms_phonebook
+#
+# Reads and parse phonebook specified by sms_phonebook config parameter.
+#
+sub parse_sms_phonebook {
+	return unless $config{sms_phonebook};
+	if(open SMSBOOK, $config{sms_phonebook}) {
+		print "Reading SMS phonebook\n";
+		my ($nick,$phone);
+		while (<SMSBOOK>) {
+			s/[#;].*//;
+			next if (1../^\s*\[\s*phones\s*\]/i);
+			s/^\s*(.*?)\s*$/$1/;
+			next unless $_;
+			$smsphones{$1} = $2 if /^(\w+)\s+(.+)/;
+		}
+	close SMSBOOK;
+	} else {
+		print "! Error: Can't open sms phomebook $config{sms_phonebook}\n";
 	}
 }
 
@@ -2160,14 +3739,15 @@ sub parse_command
 	my($cmd,@args) = split /\s+/,$command;
 	$cmd = lc($cmd);
 	return &{$_command_handlers{$cmd}}(@args) if (exists $_command_handlers{$cmd});
-	return "No such command. Use 'help' or '?' to get help'" if ($cmd ne '');
-
-
-
-
+	return "No such command. Use 'help' to get help'" if ($cmd ne '');
+	return '';
 }
 
 sub do_network {
+	unless($keepalive++ % 60)
+	{
+		$icq->Send_Keep_Alive();
+	}
 	if($icq)
 	{
    		$icq->Execute_Once();
@@ -2195,12 +3775,41 @@ sub GetContact
 	return $contact;
 }
 
+sub GetPhone
+{
+	my$nick = shift;
+	foreach (keys %smsphones)
+	{
+		return $smsphones{$_} if(lc($_) eq lc($nick));
+		
+	}
+	return '';
+}
+
+sub in_array
+{
+	my $item = shift;
+	my $ref = shift;
+	foreach (@{$ref})
+	{
+		return 1 if (lc $_ eq lc $item)
+	}
+	return 0;
+}
+
+sub GetVersion
+{
+	my($v) = shift;
+	$v = $Net::ICQ2000::_ICQ_Versions{$v} || 'Unknown client';
+	return $v;
+}
+
 sub GetUIN
 {
 	my$contact = shift;
 	foreach (keys %contacts)
 	{
-		return $_ if(lc($contacts{$_}) eq lc($contact));
+		return $_ if((lc($contacts{$_}) eq lc($contact)) || in_array($contact, $contacts{$_}{aliases}));
 		
 	}
 	if($contact !~ /^\d+$/)
@@ -2216,20 +3825,61 @@ sub GetUIN
 sub read_message
 {
 	my $text = '';
-	my $term = new Term::ReadLine 'vICQ v0.1';
+	# my $term = new Term::ReadLine 'vICQ v0.2';
 	my $prompt = "msg# ";
+	print "Input '.' in the empty line to end message or '#' to cancel message\n";
 	while ( ($_ = $term->readline($prompt)) ne ".")
 	{
+		if($_ eq '#') 
+		{
+			$text = '';
+			last;
+		}
+		$term->remove_history($term->where_history()) if($gnu_readline);
 		$text .= "$_\r\n";
 	}
+	$term->remove_history($term->where_history()) if($gnu_readline);
+	$text =~ s/\r\n$//;
 
+	return $text;
+}
+
+sub read_description
+{
+	my $text = '';
+	my $prompt = "desc# ";
+	while ( ($_ = $term->readline($prompt)) ne ".")
+	{
+		if($_ eq '#') 
+		{
+			$text = '';
+			last;
+		}
+		$text .= "$_\r\n";
+		$term->remove_history($term->where_history()) if($gnu_readline);
+	}
+	$term->remove_history($term->where_history()) if($gnu_readline);
+	$text =~ s/\r\n$//;
+	return $text;
+}
+
+sub read_url
+{
+	my $text = '';
+	my $prompt = "URL: ";
+	$text = $term->readline($prompt);
+	$term->remove_history($term->where_history()) if($gnu_readline);
 	return $text;
 }
 
 
 
+
+
 sub disconnect {
-	&save_config;
+	alarm 0;
+	$SIG{ALRM} = sub {};
+	&save_config unless ($config{keep_config});
     print "Exiting..\n";
     exit(0);
 }
@@ -2250,9 +3900,7 @@ sub DisplayDetails {
 
 sub SrvMessage {
     my($Object, $details) = @_;
-	beep();
-    print "\n";
-	separator();
+	my $output = '';
     #These are responces from the server which r unique to ICQ..
     if ($details->{Responce_Type}){
     }
@@ -2263,13 +3911,13 @@ sub SrvMessage {
 		my $reason = color_message(decode($details->{reason}));
 		my $last_message_from = $details->{Sender};
 		my $Sender = color_uin($details->{Sender});
-		print "Authorization request from $Sender\n" .
+		$output .= "Authorization request from $Sender\n" .
 		"Nick       :     $nick\n" .
 		"First name :     $first_name\n" .
 		"Last name  :     $last_name\n" .
 		"Email      :     $email\n" .
 		"\n$reason\n";
-		log_event( $details->{Sender},"Authorization request from $Sender\n" .
+		log_incoming_event( $details->{Sender},"Authorization request from $Sender\n" .
 		"Nick       :     $nick\n" .
 		"First name :     $first_name\n" .
 		"Last name  :     $last_name\n" .
@@ -2280,16 +3928,16 @@ sub SrvMessage {
     elsif ($details->{MessageType} eq "contacts"){
 		my $nick = color_nick(GetContact($details->{Sender}));
 		$last_message_from = $details->{Sender};
-		print "Got $details->{Count} contacts from $nick:\n";
+		$output .= "Got $details->{Count} contacts from $nick:\n";
 		my $log = "Got $details->{Count} contacts from $nick:\n";
 		my$i = 0;
 		while($i<= $#{$details->{Contacts}})
 		{
-			print color_uin($details->{Contacts}->[$i])," ", color_nick("$details->{Contacts}->[$i+1]\n");
+			$output .= color_uin($details->{Contacts}->[$i])," ", color_nick("$details->{Contacts}->[$i+1]\n");
 			$log .= $details->{Contacts}->[$i]. " " . "$details->{Contacts}->[$i+1]\n";
 			$i+=2;
 		}
-		log_event($last_message_from, $log);
+		log_incoming_event($last_message_from, $log);
 	}
     elsif ($details->{MessageType} eq "contacts_request"){
 		my $name = GetContact($details->{Sender});
@@ -2297,8 +3945,8 @@ sub SrvMessage {
 		my $reason = decode(GetContact($details->{Reason}));
 		$name = color_nick($name);
 		$reason = color_message($reason);
-		print "Contacts request from $name:\n$reason\n";	
-		log_event($last_message_from, "Contacts request from $name:\n$reason\n");
+		$output .= "Contacts request from $name:\n$reason\n";	
+		log_incoming_event($last_message_from, "Contacts request from $name:\n$reason\n");
 	}
 
     elsif ($details->{MessageType} eq "Normal"){
@@ -2306,24 +3954,48 @@ sub SrvMessage {
 		$last_message_from = $details->{Sender};
 		my $text = decode($details->{text});
 		$text = color_message($text);
-		print "Instant offline message from $name:\n$text\n";	
-		log_event($last_message_from, "Instant offline message from $name:\n$text\n");
+		$output .= "Instant offline message from $name:\n$text\n";	
+		log_incoming_event($last_message_from, "Instant offline message from $name:\n$text\n");
     }
     elsif ($details->{MessageType} eq "ack_offline"){
-		print "End of offline messages!\n";
+		$output .= "End of offline messages!\n";
+		$redisplay = 1;
     }
+    elsif ($details->{MessageType} eq "User_Info_NotFound"){
+		$uin = color_uin("#$requested_uin");
+		$output .= "Info for $uin not found\n";
+		$redisplay = 1;
+	}
+    elsif ($details->{MessageType} eq "User_Short_Info"){
+				my ($nick, $fname, $lname, $email) =
+                ( $details->{Nickname} ,
+                	$details->{Firstname} ,
+                	$details->{Lastname} ,
+                	$details->{Email}   
+				);
+		
+
+		$nick = color_nick(decode($nick));
+		$fname = color_nick(decode($fname));
+		$lname = color_nick(decode($lname));
+		my $uin = color_uin("#$requested_uin");
+
+		$output .= "$uin info:\nNickname   : $nick\nFirst name : $fname\nLast name  : $lname\nEmail      : $email\n";
+		log_incoming_event($requested_uin,"$uin info:\nNickname   : $nick\nFirst name : $fname\nLast name  : $lname\nEmail      : $email\n");
+	}
     elsif ($details->{MessageType} eq "URL"){
 		$name = color_nick(GetContact($details->{Sender}));
 		$last_message_from = $details->{Sender};
+		$last_message_url = $details->{URL};
 		$details->{URL} = color_message(decode($details->{URL}));
 		$details->{Description} = color_message(decode($details->{Description}));
-		print "URL message from $name\nURL : $details->{URL}\nDescription:\n$details->{Description}\n";	
-		log_event($last_message_from, "URL message from $name\nURL : $details->{URL}\nDescription:\n$details->{Description}\n");
+		$output .= "URL message from $name\nURL : $details->{URL}\nDescription:\n$details->{Description}\n";	
+		log_incoming_event($last_message_from, "URL message from $name\nURL : $details->{URL}\nDescription:\n$details->{Description}\n");
     }
     elsif ($details->{MessageType} eq "sms_message"){
-		$last_message_from = color_message($details->{Sender});
-		print "SMS message from $details->{sender}($details->{senders_network})\n$details->{time}\n$details->{text}\n";
-		log_event($last_message_from, "SMS message from $details->{sender}($details->{senders_network})\n$details->{time}\n$details->{text}\n");
+		$last_message_from = "sms.$details->{sender}";
+		$output .= "SMS message from $details->{sender}($details->{senders_network})\n$details->{time}\n$details->{text}\n";
+		log_incoming_event($last_message_from, "SMS message from $details->{sender}($details->{senders_network})\n$details->{time}\n$details->{text}\n");
     }
     elsif ($details->{MessageType} eq "sms_response"){
         #$details->{deliverable}      - is it deliverable? (Yes/No)
@@ -2331,10 +4003,174 @@ sub SrvMessage {
         #$details->{message_id}       - The ID given to the SMS message
         #$details->{messages_left}    - Messages left to send (I always get 0..)
         #$details->{TaggedDataString} - The non decoded data string, log it if the message isn't deliverable, since it contains the error message (which isn't collected very verll otherwise..)
-    }
-	separator();
+		if($details->{deliverable} ne 'SMTP')
+		{
+			$output .= "Response from SMS server:\nDeliberable  : $details->{deliverable}\n",
+				"Network      : $details->{network}\n",
+				"MessageID    : '$details->{message_id}'\n";
+       			$sender=$1 if $details->{message_id}=~/-(\d+)\s*$/;
+       			$sender ||="SMSC";
+				log_incoming_event( "sms.$sender", "Response from SMS server: Deliberable  :$details->{deliverable}\n". "Network      :$details->{network}\n" . "MessageID    :'$details->{message_id}'\n");
+
+		} else
+		{
+
+			$output .= "Response from SMS server:\nDeliberable : via SMTP\nTo          : $details->{to}\n";
+       		$sender=$1 if $details->{message_id}=~/-(\d+)\s*$/;
+       		$sender ||="SMSC";
+			log_incoming_event("sms.$sender","Response from SMS server:\nDeliberable : via SMTP\nTo          : $details->{to}\n");
+		}
+    } 
+	elsif($details->{MessageType} eq "WP_result_info")
+	{
+		my $uin = color_uin($details->{UIN});
+		my $nick = color_nick($details->{Nickname});
+		my $fname = $details->{Firstname};
+		my $lname = $details->{Lastname};
+		my $email = $details->{Email};
+		$search_result .= qq~UIN       : $uin
+Firstname : $fname
+Nickname  : $nick
+Lastname  : $lname
+Email     : $email
+~;
+	}
+	elsif($details->{MessageType} eq "User_Info_homepage")	
+	{
+		my $uin = $requests{$details->{Ref}};
+		foreach ('Birth_Year','Sex','Birth_Day','Language1','Language2',
+			'Language3','Birth_Month','Age','Homepage')
+		{
+			$wp{$uin}->{$_} = $details->{$_};
+		}
+
+	}
+
+	elsif($details->{MessageType} eq "WP_final_result_info")
+	{
+		if(!$details->{UIN})
+		{
+			$output .= "Nothing was found :(\n"
+		} else
+		{
+			my $uin = color_uin($details->{UIN});
+			my $nick = color_nick($details->{Nickname});
+			my $fname = $details->{Firstname};
+			my $lname = $details->{Lastname};
+			my $email = $details->{Email};
+			$output .= $search_result . qq~UIN       : $uin
+Firstname : $fname
+Nickname  : $nick
+Lastname  : $lname
+Email     : $email
+~;
+		}
+		$output .= "All users found\n";
+		$search_result = '';
+	}
+	elsif($details->{MessageType} eq "Set_Main_Info_Ack")
+	{
+		$output = "Main info set\n";
+	}
+	elsif($details->{MessageType} eq "User_Info_Extra_Emails")
+	{
+		my $uin = $requests{$details->{Ref}};
+		foreach ('Extra_Email_Count','Extra_Emails')
+		{
+			$wp{$uin}->{$_} = $details->{$_};
+		}
+
+
+	}
+	elsif($details->{MessageType} eq "User_Info_Main")
+	{
+		my $uin = $requests{$details->{Ref}};
+		foreach ( 'Nickname', 'Firstname', 'Lastname',
+                'Email',  'City',  'State', 'Telephone',
+                'Fax_Num', 'Address', 'Mobile_Phone',
+                'Zip', 'GMT_Code' )
+		{
+			$wp{$uin}->{$_} = $details->{$_};
+		}
+	}
+	elsif($details->{MessageType} eq "User_Info_Work")
+	{
+		my $uin = $requests{$details->{Ref}};
+		foreach ('Company_City', 'Company_State', 'Company_Address',
+			'Company_Zip', 'Company_Country', 'Company_Name',
+			'Company_Department', 'Company_Position', 'Company_Occupation',
+			'Company_URL', 'Company_Phone', 'Company_Fax')
+		{
+			$wp{$uin}->{$_} = $details->{$_};
+		}
+	
+	
+	}
+	elsif($details->{MessageType} eq "User_Info_About")
+	{
+		my $uin = $requests{$details->{Ref}};
+		$wp{$uin}->{about} = $details->{about};
+	}
+
+	elsif($details->{MessageType} eq "User_Info_Personal_Interests")
+	{
+		my $uin = $requests{$details->{Ref}};
+		foreach ('Interests_Count', 'Interests_Type', 'Interests_Desc')
+		{
+			$wp{$uin}->{$_} = $details->{$_};
+		}
+
+	}
+	elsif($details->{MessageType} eq "User_Info_Past_Background")
+	{
+		my $uin = $requests{$details->{Ref}};
+		$output .= build_wp_info($uin);
+	}
+
+	elsif($details->{MessageType} eq "User_Info_Unknown")
+	{
+	}
+	else
+	{
+		if($opts{'D'})
+		{
+			foreach (keys %{$details})
+			{
+				print "$_ = $details->{$_}\n";
+			}
+		}
+
+		$output .= "Unknown type: $details->{MessageType} [$details->{Sender}]\n";
+	}
+	if($output ne '')
+	{
+			print "\n";
+			separator();
+			print $output;
+			invoke_hook($details->{MessageType},$details->{sender},$details->{text});
+			beep($details->{MessageType},$details->{sender},$details->{text});
+			separator();
+			if($details->{Sender} && $config{auto_info})
+			{
+				my $haveit = 0;
+				foreach (keys %contacts)
+				{
+					if($_ eq $details->{Sender})
+					{
+						$haveit = 1;
+					}
+				}
+				get_info($details->{Sender}) unless $haveit;
+			}
+			redisplay();
+	}
 }
 
+sub Password_Error
+{
+	print $colors{RED},"Password mismatch! Disconnecting...",$colors{NORMAL};
+	&disconnect;
+}
 
 sub User_Online {
     my($Object, $details) = @_;
@@ -2345,8 +4181,48 @@ sub User_Online {
 	$contact = GetContact($details->{UIN});
 	if($prefs{$details->{UIN}}{status} ne $status)
 	{
-    	print "\n";
-		print "$contact change status to  $status\n";
+		invoke_hook('status_change',$details->{UIN},$status);
+		unless($config{'mode'} eq 'silent')
+		{
+			$cstatus = color_status($status);
+    		print "\n";
+			print "$contact change status to  $cstatus\n";
+			log_incoming_event($details->{UIN},"$contact change status to  $cstatus\n") if $config{log_type}=~/s/;
+			beep('status_change',$details->{UIN},$status);
+			redisplay();
+		}
+	}
+	$prefs{$details->{UIN}}{ip} = $ip;
+	$prefs{$details->{UIN}}{status} = $status;
+	$prefs{$details->{UIN}}{dc_ip} = $details->{'LAN_IP'};
+	$prefs{$details->{UIN}}{dc_port} = $details->{'LAN_Port'};
+	$prefs{$details->{UIN}}{icq_version} = $details->{'ICQ_Version'};
+    
+    #$details->{Online_Status}  - Contact's Status (not very nice currenlty, I'll be making it better soon..)
+    #$details->{Online_User}    - Contact's ICQ number
+    #$details->{SignOn_Date}    - Contact's Logon Date (in UTC)
+    #$details->{Time_Online}    - Contact's Online length of Time (in secs)
+}
+
+sub User_Offline {
+    my($Object, $details) = @_;
+    
+    #someone on your contact list has come online..
+	$status = "Offline";
+	$ip = "x.x.x.x";
+	$contact = GetContact($details->{UIN});
+	if($prefs{$details->{UIN}}{status} ne $status)
+	{
+		invoke_hook('status_change',$details->{UIN},$status);
+		unless($config{'mode'} eq 'silent')
+		{
+			$cstatus = color_status($status);
+    		print "\n";
+			print "$contact change status to  $cstatus\n";
+			log_incoming_event($details->{UIN},"$contact change status to  $cstatus\n") if $config{log_type}=~/s/;
+			beep('status_change',$details->{UIN},$status);
+			redisplay();
+		}
 	}
 	$prefs{$details->{UIN}}{ip} = $ip;
 	$prefs{$details->{UIN}}{status} = $status;
@@ -2358,13 +4234,11 @@ sub User_Online {
     #$details->{Time_Online}    - Contact's Online length of Time (in secs)
 }
 
+
+
 sub RecMessage {
     my($Object, $details) = @_;
-	
-    
-    print "\n";
-	separator();
-	beep();
+	my $output = '';
     if ($details->{MessageType} eq "auth_request"){
 
 		$last_message_from = $details->{Sender};
@@ -2372,76 +4246,136 @@ sub RecMessage {
 		$details->{first_name} = color_nick(decode($details->{first_name}));
 		$details->{last_name} = color_nick(decode($details->{last_name}));
 		$details->{reason} = color_message(decode($details->{reason}));
-		print "Authorization request from $details->{Sender}\n";
-		print "Nick       :     $details->{nick}\n";
-		print "First name :     $details->{first_name}\n";
-		print "Last name  :     $details->{last_name}\n";
-		print "Email      :     $details->{email}\n";
-		print "\n$details->{reason}\n";
+		$output .= "Authorization request from $details->{Sender}\n";
+		$output .= "Nick       :     $details->{nick}\n";
+		$output .= "First name :     $details->{first_name}\n";
+		$output .= "Last name  :     $details->{last_name}\n";
+		$output .= "Email      :     $details->{email}\n";
+		$output .= "\n$details->{reason}\n";
 	}
+	elsif ($details->{MessageType} eq "add_message")
+	{
+		my $Sender = color_uin($details->{Sender});
+		$output .= "You have been added to contact list by $Sender\n";
+	}
+
     elsif ($details->{MessageType} eq "contacts"){
 		my $nick = color_nick(GetContact($details->{Sender}));
 		$last_message_from = $details->{Sender};
-		print "Got $details->{Count} contacts from $nick:\n";
+		$output .= "Got $details->{Count} contacts from $nick:\n";
 		my $log = "Got $details->{Count} contacts from $nick:\n";
 		my$i = 0;
 		while($i<= $#{$details->{Contacts}})
 		{
-			print color_uin("$details->{Contacts}->[$i]")," ",color_nick("$details->{Contacts}->[$i+1]\n");
+			$output .= color_uin("$details->{Contacts}->[$i]")," ",color_nick("$details->{Contacts}->[$i+1]\n");
 			$log .=  "$details->{Contacts}->[$i] $details->{Contacts}->[$i+1]\n";
 			$i+=2;
 		}
-		log_event($last_message_from,$log);
+		log_incoming_event($last_message_from,$log);
 	}
     elsif ($details->{MessageType} eq "Normal"){
 		$name = color_nick(GetContact($details->{Sender}));
 		$last_message_from = $details->{Sender};
 		my $text  = color_message(decode($details->{text}));
-		print "Instant message from $name:\n$text\n";	
-		log_event($details->{Sender},"Instant message from $name:\n$text\n");	
+		$output .= "Instant message from $name:\n$text\n";	
+		log_incoming_event($details->{Sender},"Instant message from $name:\n$text\n");	
     }
     elsif ($details->{MessageType} eq "contacts_request"){
 		$name = color_nick(GetContact($details->{Sender}));
 		$last_message_from = $details->{Sender};
 		$Reason = color_message(decode($details->{Reason}));
-		print "Contacts request from $name:\n$Reason\n";	
-		log_event($details->{Sender},"Contacts request from $name:\n$Reason\n");	
+		$output .= "Contacts request from $name:\n$Reason\n";	
+		log_incoming_event($details->{Sender},"Contacts request from $name:\n$Reason\n");	
     }
     elsif ($details->{MessageType} eq "URL"){
 		$name = color_nick(GetContact($details->{Sender}));
 		$last_message_from = $details->{Sender};
+		$last_message_url = $details->{URL};
 		$details->{URL} = color_message(decode($details->{URL}));
 		$details->{Description} = color_message(decode($details->{Description}));
-		print "URL message from $name\nURL : $details->{URL}\nDescription:\n$details->{Description}\n";	
-		log_event($last_message_from, "URL message from $name\nURL : $details->{URL}\nDescription:\n$details->{Description}\n");	
+		$output .= "URL message from $name\nURL : $details->{URL}\nDescription:\n$details->{Description}\n";	
+		log_incoming_event($last_message_from, "URL message from $name\nURL : $details->{URL}\nDescription:\n$details->{Description}\n");	
 
 	}
     elsif ($details->{MessageType} eq "sms_message"){
-		print "SMS message from $details->{sender}($details->{senders_network})\n$details->{time}\n$details->{text}\n";
-		$last_message_from = $details->{Sender};
-		log_event($last_message_from, "SMS message from $details->{sender}($details->{senders_network})\n$details->{time}\n$details->{text}\n");
-    } else
-	{
-		print "Unknown Message!\n";
+		$output .= "SMS message from $details->{sender}($details->{senders_network})\n$details->{time}\n$details->{text}\n";
+		$last_message_from = "sms.$details->{sender}";
+		log_incoming_event($last_message_from, "SMS message from $details->{sender}($details->{senders_network})\n$details->{time}\n$details->{text}\n");
+    }
+    elsif ($details->{MessageType} eq "sms_delivery_receipt"){
+		$output .= qq~
+SMS delivery receipt
+Destination : $details->{destination}
+MessageId   : $details->{message_id}
+Delivered   : $details->{delivered}
+Submitted   : $details->{submition_time}
+Delivered   : $details->{delivery_time}
+~;
+		
+		log_incoming_event("sms.$details->{destination}",qq~
+SMS delivery receipt
+Destination : $details->{destination}
+MessageId   : $details->{message_id}
+Delivered   : $details->{delivered}
+Submitted   : $details->{submition_time}
+Delivered   : $details->{delivery_time}
+~);
+	
 	}
-        
-	separator();
+
+ 	else
+	{
+		if($opts{'D'})
+		{
+			foreach (keys %{$details})
+			{
+				print "$_ = $details->{$_}\n";
+			}
+		}
+		$output .= "Unknown type: $details->{MessageType} [$details->{Sender}]\n";
+	}
+
+	if($output ne '')
+	{
+    	print "\n";
+		separator();
+        print $output;
+		separator();
+		invoke_hook($details->{MessageType},$last_message_from,$details->{text});
+		beep($details->{MessageType},$last_message_from,$details->{text});
+		if($details->{Sender} && $config{auto_info})
+		{
+			my $haveit = 0;
+			foreach (keys %contacts)
+			{
+				if($_ eq $details->{Sender})
+				{
+					$haveit = 1;
+				}
+			}
+			get_info($details->{Sender}) unless $haveit;
+		}
+
+		redisplay();
+	}
 }
 
 
 sub win2koi
 {
 	my $s = shift;
-	$s =~  tr/¨ÉÖÓÊÅÍÃØÙÇÕÚÔÛÂÀÏÐÎËÄÆÝß×ÑÌÈÒÜÁÞ¸éöóêåíãøùçõúôûâàïðîëäæýÿ÷ñìèòüáþ/³êãõëåîçûýúèÿæù÷áðòïìäöüñþóíéôøâà£ÊÃÕËÅÎÇÛÝÚÈßÆÙ×ÁÐÒÏÌÄÖÜÑÞÓÍÉÔØÂÀ/;
+	$s =~ tr/\xb3¨ÉÖÓÊÅÍÃØÙÇÕÚÔÛÂÀÏÐÎËÄÆÝß×ÑÌÈÒÜÁÞ¸éöóêåíãøùçõúôûâàïðîëäæýÿ÷ñìèòüáþ¿¯³²ºª/¦³êãõëåîçûýúèÿæù÷áðòïìäöüñþóíéôøâà£ÊÃÕËÅÎÇÛÝÚÈßÆÙ×ÁÐÒÏÌÄÖÜÑÞÓÍÉÔØÂÀ\xa7\xb7\xa6\xb6\xa4\xb4/;
 	return $s;
 }
 
 sub koi2win
 {
 	my $s = shift;
-	$s =~  tr/³êãõëåîçûýúèÿæù÷áðòïìäöüñþóíéôøâà£ÊÃÕËÅÎÇÛÝÚÈßÆÙ×ÁÐÒÏÌÄÖÜÑÞÓÍÉÔØÂÀ/¨ÉÖÓÊÅÍÃØÙÇÕÚÔÛÂÀÏÐÎËÄÆÝß×ÑÌÈÒÜÁÞ¸éöóêåíãøùçõúôûâàïðîëäæýÿ÷ñìèòüáþ/;
+	$s =~ tr/¤´§·¦¶³êãõëåîçûýúèÿæù÷áðòïìäöüñþóíéôøâà£ÊÃÕËÅÎÇÛÝÚÈßÆÙ×ÁÐÒÏÌÄÖÜÑÞÓÍÉÔØÂÀ/ºª¿¯\xb3²¨ÉÖÓÊÅÍÃØÙÇÕÚÔÛÂÀÏÐÎËÄÆÝß×ÑÌÈÒÜÁÞ¸éöóêåíãøùçõúôûâàïðîëäæýÿ÷ñìèòüáþ/;
 	return $s;
 }
+
+
 
 sub decode
 {
@@ -2460,10 +4394,11 @@ sub encode
 sub separator
 {
 	my $title = shift;
+	return if ($config{disable_empty_separators} && $title eq "");
 	my $len = int(($config{separator_length} - length($title) - 2) / 2);
 	if($title ne '')
 	{
-		print  $colors{$config{separator_color}},"="x$len," ",$title," ","="x$len,"$colors{NORMAL}\n";
+		print  $colors{$config{separator_color}},"="x$len," ",$colors{$config{separator_title_color}},$title,$colors{NORMAL},$colors{$config{separator_color}}," ","="x$len,"$colors{NORMAL}\n";
 	} else 
 	{
 				print $colors{$config{separator_color}},"="x$config{separator_length},"$colors{NORMAL}\n";
@@ -2473,6 +4408,7 @@ sub separator
 sub color_uin
 {
 	my $uin = shift;
+	return $uin unless $config{colors};
 	$uin = $colors{$config{uin_color}} . $uin . $colors{NORMAL};
 	return $uin;
 }
@@ -2480,15 +4416,60 @@ sub color_uin
 sub color_nick
 {
 	my $nick = shift;
+	return $nick unless $config{colors};
 	$nick = $colors{$config{nick_color}} . $nick . $colors{NORMAL};
 	return $nick;
 }
 
+sub color_status
+{
+	my $nick = shift;
+	return $nick unless $config{colors};
+	$nick = $colors{$config{status_color}} . $nick . $colors{NORMAL};
+	return $nick;
+}
 sub color_message
 {
 	my $message = shift;
+	return $message unless $config{colors};
 	$message = $colors{$config{message_color}} . $message . $colors{NORMAL};
 	return $message;
+}
+
+sub color_their_history
+{
+	my $message = shift;
+	return $message unless $config{colors};
+	$message = $colors{$config{their_history_color}} . $message . $colors{NORMAL};
+	return $message;
+}
+
+
+sub color_my_history
+{
+	my $message = shift;
+	return $message unless $config{colors};
+	$message = $colors{$config{my_history_color}} . $message . $colors{NORMAL};
+	return $message;
+}
+
+
+
+
+sub color_entries
+{
+	my ($ref) = shift;
+	foreach (@{$ref})
+	{
+		if(/^> /)
+		{
+			$_ = &color_their_history($_);
+		} else
+		{
+			$_ = &color_my_history($_);
+		}
+	
+	}
 }
 
 sub Register
@@ -2498,20 +4479,520 @@ sub Register
 
 sub beep
 {
-	print "\x07";
+    my ($event_type,$uin,$text) = @_;
+
+
+	if($config{player} eq '')
+	{
+		print "\x07";
+	} else
+	{
+
+    	for my $hook (@SoundHooks) 
+		{
+			if ($event_type=~$hook->{type}) 
+			{
+           		my $cmd = $hook->{file};
+	   			$cmd=~s/%([%eutn])/&hook_subst($1,$event_type,$uin,$text)/eg;
+				my $cmdline = $config{player};
+				$cmdline =~ s/\%f/$cmd/;
+	   			system $cmdline;
+         		return;
+			}     
+    	}
+		
+	}
 }
 
 
-sub log_event
+sub log_outgoing_event
 {
 	my $uin = shift;
 	my $message = shift;
+        log_event($uin,$message,'<');	
+}
+
+
+
+sub log_incoming_event
+{
+	my $uin = shift;
+	my $message = shift;
+        log_event($uin,$message,'>');	
+}
+
+sub log_event{
+	my ($uin,$message,$format) = @_;
+	return unless $config{log_type};
 	my $now_string = localtime;
 	$message =~ s/\033\[[10];3.m//g;
-	my $home = $ENV{HOME};
-	open LOG,">> $home/.vicq.log/$uin.log" or warn "Can't open file  $home/.vicq.log/$uin.log";
-	print LOG "--[ $now_string\n";
+	$uin =~ s/\033\[[10];3.m//g;
+	$message =~ s/\.\[0m//g;
+	$uin =~ s/\.\[0m//g;
+
+	my $fname=($config{log_type}=~/a/)?'vicq.log':"$uin.log";
+	open LOG,">> $config{log_path}$fname" or warn "Can't open file  $config{log_path}$fname";
+	print LOG "--[$format $now_string\n";
 	print LOG $message;
+	print LOG "\n" if $config{log_type}=~/n/;
 	close LOG;
+	if ($config{log_type}=~/l/ && $config{log_type}=~/u/){
+	   my $name=$contacts{$uin};
+	   eval {chdir $config{log_path}; symlink "$uin.log","$name.log" unless (-e "$name.log");}
+	}
+}
+#
+# Is called when something happens. Searches for external program to
+# invoke in @ExternalHooks
+#
+sub invoke_hook {
+    my ($event_type,$uin,$text) = @_;
+
+    for my $hook (@ExternalHooks) {
+	if ($event_type=~$hook->{type}) {
+           my $cmdline = $hook->{command};
+	   $cmdline=~s/%([%eutn])/&hook_subst($1,$event_type,$uin,$text)/eg;
+	   system $cmdline;
+         return;
+	}     
+    }
+}    
+
+sub hook_subst {
+   my ($specifier,$event,$uin,$text)=@_;
+  if ($specifier eq '%') {
+      return $specifier;
+  } elsif ($specifier eq 'e') {
+      return $event;
+  } elsif ($specifier eq 'u') {
+      return $uin;
+  } elsif ($specifier eq 'n') {
+     my $nick=GetContact($uin);
+     return $uin unless $nick;
+     $nick =~ s/'/'\\''/g;
+     return ("'$nick'");
+ } elsif ($specifier eq 't') {
+     $text =~ s/'/'\\''/g;
+     return "'$text'";
+ } else {
+     die "Unknown format specifier $specifier in invoke_hook.";
+ }
+} 
+
+sub redisplay()
+{
+	if($gnu_readline)
+	{
+		# if($redisplay)
+		# {
+				$term->forced_update_display();
+		# }
+	}
+}
+
+sub do_reply 
+{ 
+			my @args = @_;
+			my $uin = shift @args;
+			my $msg = '';
+			my ($details);
+			if(!$uin)
+			{
+				return 'You didn\'t have UIN for this operation';
+			}
+			if ($uin =~ /^sms.(\d+)/) {
+			    my $target = $1;
+				print "Composing message SMS to $target:\n";
+				$msg = read_message();
+				$last_message_to = $uin;
+				my %details = ( SMS_Dest_Number  => $target,
+							MessageType => 'SMS',
+							text =>  encode($msg),
+							delivery_receipt=>'Yes'								
+							
+				);
+				$icq->Send_Command("Cmd_Srv_Message", \%details);
+			 	log_outgoing_event("sms.$target","Send SMS to $target\n$msg\n");
+				return "You sent SMS message to $target\n";
+			
+			}    
+			my $nick = GetContact($uin);
+			$nick = color_nick($nick);
+			if($#args>-1)
+			{
+				$msg = join ' ',@args;
+			} else
+			{
+				print "Composing message to $nick:\n";
+				$msg = read_message();
 	
+			}
+			$last_message_to = $uin;
+			if($msg eq '') { return "Message canceled"; }
+			my %details = ( uin => $uin,
+							MessageType => 'text',
+							text =>  encode($msg)
+			);
+			$icq->Send_Command("Cmd_Send_Message", \%details);
+
+			$nick = GetContact($uin);
+			$nick = color_nick($nick);
+			log_outgoing_event($uin,"Replied to message from $nick\n$msg\n");
+			return "You sent instant message to $nick";
+}
+
+sub get_my_info
+{
+	my %details = ( 
+					MessageType => "Self_Info_Request",
+	);
+	$icq->Send_Command("Cmd_Srv_Message", \%details);
+	print "Self info request sent\n";
+}
+
+sub get_my_info
+{
+	my %details = ( 
+					MessageType => "Self_Info_Request",
+	);
+	$icq->Send_Command("Cmd_Srv_Message", \%details);
+	print "Self info request sent\n";
+}
+
+
+
+sub set_my_info
+{
+	my $uin = $config{uin};
+	my $dir = $ENV{'HOME'} . "/.vicq/wpinfo";
+	if(! -e $dir)
+	{
+		if(!mkdir ($dir,0700))
+		{
+			print "Cann't create directory $dir\n";
+			return;
+		}
+	}
+	
+	my $fname = $dir . "/$uin.nfo";
+	if(!-e $fname)
+	{
+		if(open FILE,"> $fname")
+		{
+			print FILE "Nickname: \n";
+			print FILE "Firstname: \n";
+			print FILE "Lastname: \n";
+			print FILE "Email: \n";
+			close FILE;
+		} else
+
+		{
+			print "Cann't create file $fname \n";
+			return;
+		}
+	} 
+	my $editor = $config{editor} || $ENV{'EDITOR'};
+	system("$editor $fname");
+	if(open FILE,"< $fname")
+	{
+		my @lines = <FILE>;
+		close FILE;
+		chomp @lines;
+		foreach (@lines)
+		{
+			if(/^(\w+):\s+(.*)/)
+			{
+				$wpinfo{$1} = $2;
+				print "$1: $2\n";
+			}
+		}
+		my %details = ( 
+					MessageType => "Set_Main_WP_Info",
+					_nickname => $wpinfo{'Nickname'},
+					_firstname => $wpinfo{'Firstname'},
+					_lastname => $wpinfo{'Lastname'},
+					_email => $wpinfo{'Email'}
+		);
+		print "Submit this info to ICQ directory(y/n)? ";
+		my $c = <>;
+		chomp $c;
+		$c = lc $c;
+		$icq->Send_Command("Cmd_Srv_Message", \%details) if ($c eq 'y');
+	} else
+	{
+		print "Cann't open file $fname\n";
+	}
+	
+}
+
+
+
+sub get_wp_info
+{
+	my @args = @_;
+	my $uin = GetUIN($args[0]);
+	return if ($uin == 1020);
+	if(!$uin) { return "No such nick"; }
+	my $nick = GetContact($uin);
+	$nick = color_nick($nick);
+	my %details = ( 
+					MessageType => "Get_WP_Info",
+					TargetUIN => $uin
+	);
+	$requested_uin = $uin;
+	$icq->Send_Command("Cmd_Srv_Message", \%details);
+	$uin = color_uin($uin);
+	print "White pages info request for $uin sent\n";
+	log_outgoing_event($uin,"White pages info request for $uin sent\n");
+}
+
+
+
+sub get_info
+{
+	my @args = @_;
+	my $uin = GetUIN($args[0]);
+	return if ($uin == 1020);
+	if(!$uin) { return "No such nick"; }
+	my $nick = GetContact($uin);
+	$nick = color_nick($nick);
+	my %details = ( 
+					MessageType => "User_Short_Info_Request",
+					TargetUIN => $uin
+	);
+	$requested_uin = $uin;
+	$icq->Send_Command("Cmd_Srv_Message", \%details);
+	$uin = color_uin($uin);
+	print "Info request for $uin sent\n";
+	log_outgoing_event($uin,"Info request for $uin sent\n");
+}
+
+sub prompt_subst
+{
+	my ($spec,$uin,$status) = @_;
+	return $status if($spec eq 's');
+	return $uin if($spec eq 'u');
+}
+
+sub short_status
+{
+	my $status = shift;
+	return $Net::ICQ2000::_Short_Status_Desc{$status};
+}
+
+sub make_prompt
+{
+	my $template = shift;
+	my $uin =  color_uin($icq->{_UIN});
+	my $status = color_status(short_status($config{status}));
+	$template =~ s/%([sun])/&prompt_subst($1,$uin,$status)/eg;
+	$template =~ s/(\033\[[10];3.m)/$ignore_start$1$ignore_stop/g;
+	return $template;
+}
+
+sub send_text_message
+{
+	my ($uin,$msg) = @_;
+	$last_message_to = $uin;
+	my %details = ( uin => $uin,
+					MessageType => 'text',
+					text =>  encode($msg)
+	);
+	push @uin_history,$uin;
+	$icq->Send_Command("Cmd_Send_Message", \%details);
+	my $nick = GetContact($uin);
+	log_outgoing_event($uin,"Send message to $nick\n$msg\n");
+}
+
+sub set_status
+{
+	my ($status)= shift;
+	my ($details);
+	$details->{Status} = $status;
+	$config{status} = $status;
+	$icq->Send_Command("Cmd_GSC_Set_Status", $details);
+}
+
+sub send_url_message
+{
+	my ($uin,$url,$desc) = @_;
+	$last_message_to = $uin;
+	if($desc eq '') { return 'URL canceled!'; }
+		my %details = ( uin => $uin,
+						MessageType => 'url',
+						URL =>  encode($url),
+						Description => encode($desc)
+		);
+		push @uin_history,$uin;
+	$icq->Send_Command("Cmd_Send_Message", \%details);
+	my $nick = GetContact($uin);
+	log_outgoing_event($uin,"Send URL message to $nick\nURL: $url\nDecription:\n$desc\n");
+
+}
+
+sub history
+{
+	my ($uin, $messages) =  @_;
+	return unless $config{log_type};
+	$uin =~ s/\033\[[10];3.m//g;
+	$pager = $ENV{'PAGER'} || 'less -R';
+	my $home = $ENV{HOME};
+	my $fname=($config{log_type}=~/a/)?'vicq.log':"$uin.log";
+	if(!(open LOG,"< $config{log_path}$fname"))
+	{
+		print "No history file for $uin\n";
+		return;
+	}
+	my $messages_count=0;
+	while(<LOG>)
+	{
+		$messages_count++ if(/^--\[/);
+	}
+	seek LOG,0,SEEK_SET;
+	$messages = $messages_count if($messages < 0);
+	while($messages_count > $messages)
+	{
+		$_ = <LOG>;
+		$messages_count-- if(/^--\[/);
+	}
+	my @lines = <LOG>;
+	while(($lines[0] !~ /^--\[/) && @lines)
+	{
+		shift @lines;
+	}
+	if(@lines)
+	{
+		my $data = join '',@lines;
+		my @entries = split /--\[/,$data;
+		@entries = reverse @entries;
+		chomp @entries;
+		color_entries(\@entries) if($config{colored_history});
+		$uin = color_uin($uin) if($config{colored_history});
+		open PAGER,"| $pager";
+		print PAGER "History for $uin\n";
+		print PAGER join "\n--------------------------\n",@entries;
+		close PAGER;
+	}
+	close LOG;
+}
+
+
+sub remove_from_visible_list
+{
+	my $ref = shift;
+	my ($details);
+	$details->{VisibleList} = $ref;
+	$icq->Send_Command("Cmd_BOS_Remove_VisibleList", $details);
+}
+
+sub add_to_visible_list
+{
+	my $ref = shift;
+	my ($details);
+	$details->{VisibleList} = $ref;
+	$icq->Send_Command("Cmd_BOS_Add_VisibleList", $details);
+}
+
+sub remove_from_invisible_list
+{
+	my $ref = shift;
+	my ($details);
+	$details->{InVisibleList} = $ref;
+	$icq->Send_Command("Cmd_BOS_Remove_InVisibleList", $details);
+}
+
+sub add_to_invisible_list
+{
+	my $ref = shift;
+	my ($details);
+	$details->{InVisibleList} = $ref;
+	$icq->Send_Command("Cmd_BOS_Add_InVisibleList", $details);
+}
+
+sub search_by_email
+{
+	my ($email) = shift;
+	my ($details);
+	$details->{_email} = $email;
+	$details->{MessageType} = "WP_Full_Request";
+	$icq->Send_Command("Cmd_Srv_Message",$details);
+	$email = color_nick($email);
+	return "Search request for $email sent!";
+}
+
+sub save_info
+{
+	return;
+	my $uin = $requests{$details->{Ref}};
+	my $dir = $ENV{'HOME'} . "/.vicq/wpinfo";
+	if(! -e $dir)
+	{
+		if(!mkdir ($dir,0700))
+		{
+			print "Cann't create directory $dir\n";
+			return;
+		}
+	}
+	
+	my $fname = $dir . "/$uin.nfo";
+	if(!-e $fname)
+	{
+		if(open FILE,"> $fname")
+		{
+			print FILE "Nickname: $details->{Nickname}\n";
+			print FILE "Firstname: $details->{Firstname}\n";
+			print FILE "Lastname: $details->{Lastname}\n";
+			print FILE "Email: $details->{Email}\n";
+			close FILE;
+		} else
+
+		{
+			print "Cann't create file $fname \n";
+			return;
+		}
+	} 
+}
+
+sub wp_field
+{
+	my ($uin,$field_name) = @_;
+	return decode($wp{$uin}->{$field_name});
+}
+
+sub get_gender 
+{
+	my $s = shift;
+	return 'Female' if($s==1);
+	return 'Male';
+}
+
+sub build_wp_info
+{
+	my $uin = shift;
+	
+	my $local_nick = color_nick(GetContact($uin) || $uin);
+	my $name = wp_field($uin,'Firstname') . ' ' . wp_field($uin,'Lasstname');
+	my $nick = wp_field($uin,'Nickname');
+	my $email = wp_field($uin,'Email');
+	my $homepage = wp_field($uin,'Homepage');
+	my $bday = wp_field($uin,'Birth_Month') . '/' . wp_field($uin,'Birth_Day'). '/' . wp_field($uin,'Birth_Year');
+	my $sex = get_gender(wp_field($uin,'Sex'));
+	my $address = wp_field($uin,'Address');
+	my $wphone = wp_field($uin,'Company_Phone');
+	my $wfax = wp_field($uin,'Company_Fax');
+	my $age = wp_field($uin,'Age');
+	my $company = wp_field($uin,'Company_Name');
+	my $res = "User details for $local_nick [Info summary]\n"
+	. "ICQ#: $uin\n"
+	. "Name: $name\n"
+	. "NickName: $nick\n"
+	. "Primary Email: $email\n"
+	. "Address: $address\n"
+	. "Company: $company\n"
+	. "Work Phone: $wphone\n"
+	. "Work Fax: $wfax\n"
+	. "Gender: $sex\n"
+	. "Birth Date: $bday\n"
+	. "Age: $age\n";
+	return $res;
 }
