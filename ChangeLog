@@ -1,0 +1,16 @@
+13/11/2001	Alexander Timoshenko <gonzo@ukrweb.net>
+	o Fixed bug with CR,LF
+	o Fixed bug with perl 5.00xx
+	o Added msg nick/message feature
+	o Added win1251/koi8 converting
+
+14/11/2001 Alexander Timsohenko <gonzo@ukrweb.net>
+	o Net::ICQ2000 integrated into script
+	o Added 'r','a' command (thanks to Alexander Gornyi)
+	o beep() added
+	o Added Coloring
+	o Section contact looks like in .micqrc
+
+
+15/11/2001 Alexander Timsohenko <gonzo@ukrweb.net>
+	o Added 'e' command (thanks to Jonas Björklund <jonasb@hem.passagen.se>)

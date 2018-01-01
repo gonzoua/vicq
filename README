@@ -20,13 +20,6 @@ A few. But enough to communicate ;)
 [Installation]
 Im to lazy to write installation script 
 
-bash$cd Net-ICQ2000-0.2.1/
-bash$perl Makefile.pl
-bash$make
-bash$make test
-bash$su
-bash#make install
-bash#cd ..
 bash#cp vicq /usr/local/bin/
 bash#exit
 bash$cat > ~/.vicqrc
@@ -50,6 +43,7 @@ password=Your_PASSWORD
 Available options:
 uin - your uin
 password - your password
+encoding - koi or win, encoding on your terminal
 status - initial status. Valid are:
 Online
 Free_For_Chat
@@ -59,6 +53,7 @@ Occupied
 Do_Not_Disturb
 Invisible
 
+[contacts] section the same as in .micqrc
 
 To add user to visible list add before UIN asterisk ('*')
 See vicqrc.example

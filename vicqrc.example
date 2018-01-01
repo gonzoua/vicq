@@ -2,6 +2,7 @@
 status=Online
 uin=101
 password=xxx
+encoding=koi8
 [contacts]
-Friend=102
-GoodFriend=*103
+102 Friend
+*103 GoodFriend
